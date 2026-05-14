@@ -1,0 +1,109 @@
+{
+  "expo": {
+    "name": "vitaDriveTransfer",
+    "slug": "vitadrive-transfer",
+    "version": "1.4.7",
+    "orientation": "portrait",
+    "icon": "./assets/iconApp.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "updates": {
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/8e08634e-2492-45b1-90b7-72c147944d89"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "buildNumber": "1.4.7",
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": [
+          "lyft",
+          "lyft"
+        ],
+        "UIBackgroundModes": [
+          "location",
+          "fetch",
+          "remote-notification",
+          "location",
+          "fetch",
+          "remote-notification"
+        ],
+        "NSLocationAlwaysUsageDescription": "vitaDrive | Transfer sürüşünüz esnasında konum servislerini kullanarak size en uygun transferin yönlendirilmesine olanak sağlar.  vitaDrive | Transfer mesafe , süre ve ödeme bilgisinin oluşturulması ve transferin canlı takibi için konuma ihtiyaç duyar.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "vitaDrive | Transfer sürüşünüz esnasında konum servislerini kullanarak size en uygun transferin yönlendirilmesine olanak sağlar.  vitaDrive | Transfer mesafe , süre ve ödeme bilgisinin oluşturulması ve transferin canlı takibi için konuma ihtiyaç duyar.",
+        "NSLocationWhenInUseUsageDescription": "vitaDrive | Transfer sürüşünüz esnasında konum servislerini kullanarak size en uygun transferin yönlendirilmesine olanak sağlar.  vitaDrive | Transfer mesafe , süre ve ödeme bilgisinin oluşturulması ve transferin canlı takibi için konuma ihtiyaç duyar.",
+        "NSCameraUsageDescription": "vitaDrive | Transfer kamera izni, qr okutma, iş başlatma ve fotoğraf çekme gibi uygulamanın ana özellikleri için önemlidir",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "bundleIdentifier": "com.vitarnd.vitaDrive.Transfer"
+    },
+    "android": {
+      "versionCode": 38,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptiveIcon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "package": "com.vitarnd.vitaDrive.Transfer",
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "com.google.android.c2dm.permission.RECEIVE",
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.NOTIFICATIONS",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "googleServicesFile": "./google-services.json"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Kamera izni, qr okutma, iş başlatma,profil fotoğraf değiştirme gibi uygulamanın ana özellikleri için önemlidir"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "sounds": [
+            "./assets/bangbang.wav",
+            "./assets/bangbang.wav"
+          ]
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "vitaDrive-Transfer bildirim ve güzergah takibi için ve sürüşünüz esnasında konum servislerini kullanarak size en uygun transferin yönlendirilmesine olanak sağlar. vitaDrive-Transfer mesafe , süre ve ödeme bilgisinin oluşturulması ve transferin canlı takibi için konuma ihtiyaç duyar.",
+          "locationAlwaysPermission": "vitaDrive-Transfer bildirim ve güzergah takibi için ve sürüşünüz esnasında konum servislerini kullanarak size en uygun transferin yönlendirilmesine olanak sağlar. vitaDrive-Transfer mesafe , süre ve ödeme bilgisinin oluşturulması ve transferin canlı takibi için konuma ihtiyaç duyar.",
+          "locationWhenInUsePermission": "vitaDrive-Transfer bildirim ve güzergah takibi için ve sürüşünüz esnasında konum servislerini kullanarak size en uygun transferin yönlendirilmesine olanak sağlar. vitaDrive-Transfer mesafe , süre ve ödeme bilgisinin oluşturulması ve transferin canlı takibi için konuma ihtiyaç duyar.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      "expo-localization",
+      "expo-font",
+      "@react-native-community/datetimepicker"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "8e08634e-2492-45b1-90b7-72c147944d89"
+      }
+    },
+    "owner": "vitarnd",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    }
+  }
+}

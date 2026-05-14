@@ -1,0 +1,69 @@
+{
+  "project_info": {
+    "project_number": "665954629942",
+    "firebase_url": "https://vitadrivetransfer-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "vitadrivetransfer",
+    "storage_bucket": "vitadrivetransfer.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:665954629942:android:3245c1c14af2ddca929b97",
+        "android_client_info": {
+          "package_name": "com.vitarnd.vitaDrive.Transfer"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "665954629942-vi4sds2i9o165d6r8pp61m71lc8rtjvc.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCEMHoTm5XyGIjm0vBmA_xFwSKTmLu301Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "665954629942-vi4sds2i9o165d6r8pp61m71lc8rtjvc.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:665954629942:android:f8d303d86e05a401929b97",
+        "android_client_info": {
+          "package_name": "com.vitarnd.vitaDriveTransfer"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "665954629942-vi4sds2i9o165d6r8pp61m71lc8rtjvc.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCEMHoTm5XyGIjm0vBmA_xFwSKTmLu301Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "665954629942-vi4sds2i9o165d6r8pp61m71lc8rtjvc.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
