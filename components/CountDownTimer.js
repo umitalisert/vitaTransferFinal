@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, Image, StatusBar, TouchableOpacity, Dimensions, SafeAreaView, Platform } from "react-native";
+import { View, Text, StyleSheet, Image, StatusBar, TouchableOpacity, Dimensions, Platform } from "react-native";
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Color from "./Color";
 import Constants from 'expo-constants';
 import AntDesign from '@expo/vector-icons/AntDesign';

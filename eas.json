@@ -17,12 +17,14 @@
         "buildType": "apk"
       },
       "channel": "preview",
+      "autoIncrement": true,
       "env": {
         "NPM_CONFIG_LEGACY_PEER_DEPS": "1"
       }
     },
     "production": {
       "channel": "production",
+      "autoIncrement": true,
       "env": {
         "NPM_CONFIG_LEGACY_PEER_DEPS": "1"
       }

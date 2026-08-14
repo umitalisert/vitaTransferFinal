@@ -49,6 +49,7 @@ const Index = ({ navigation }) => {
     const [change, setChange] = useState(false);
     const [userState, setUserState] = useState(false);
     const [responseMessage, setResponseMessage] = useState();
+    const [photoModalVisible, setPhotoModalVisible] = useState(false);
     const bottomSheetModalRef = useRef();
     const snapPoints = useMemo(() => ['50%'], []);
     const handleSheetChanges = useCallback((index) => {
@@ -142,16 +143,16 @@ const Index = ({ navigation }) => {
         canceled: 'Abgesagt',
         vehicles: 'Fahrzeuge',
         companies: 'Firmen',
-        ok: 'Pfeil',
-        driver: 'Treiber',
+        ok: 'OK',
+        driver: 'Fahrer',
         usedVehicle: 'Gebrauchtfahrzeug',
         change: 'ändern',
         myCars: 'meine Autos',
         driverInformation: 'Fahrerinformationen',
-        myPersonalInformations: 'meinePersönlichenInformationen',
+        myPersonalInformations: 'Meine persönlichen Informationen',
         myDocuments: 'meine Dokumente',
-        institutionsIServe: 'InstitutionenIServe',
-        changeProfilePhoto: 'changeProfilePhoto',
+        institutionsIServe: 'Bediente Institutionen',
+        changeProfilePhoto: 'Profilbild ändern',
         takeAPhoto: 'Foto machen',
         chooseFromLibrary: 'aus der Bibliothek auswählen',
         failed: 'Fehlgeschlagen!',
@@ -179,19 +180,18 @@ const Index = ({ navigation }) => {
 
     function getProfile() {
         Profile.Get().then((response) => {
-            if (response.data.responseCode == 200) {
-                setUser(response.data.data);
-                setVehicles(response.data.data.vehicles)
-                setCompanies(response.data.data.companies)
-            } else if (response.data.ResponseCode == 401) {
-                responseStore.setRes401(true)
-                responseStore.setResMessage(response.data.ResponseMessage)
-
-            } else {
-
+            if (response && response.status == 200) {
+                if (response.data.responseCode == 200) {
+                    setUser(response.data.data);
+                    setVehicles(response.data.data.vehicles)
+                    setCompanies(response.data.data.companies)
+                } else if (response.data.ResponseCode == 401) {
+                    responseStore.setRes401(true)
+                    responseStore.setResMessage(response.data.ResponseMessage)
+                }
             }
-
-
+        }).catch((err) => {
+            console.log("getProfile Error: ", err);
         })
     }
     useEffect(() => {
@@ -214,46 +214,7 @@ const Index = ({ navigation }) => {
     }, [user])
 
 
-    function update() {
-        let request = {
-            imagePath: profilData
-        }
-        UpdateProfile.Put(request, cultureStore.culture).then((response) => {
-            if (response.data.responseCode == 200) {
-                setStatus(0)
-                setResponseMessage(response.data.responseMessage)
-                setChange(!change)
-                profileStore.setChange(!profileStore.change)
-            } else if (response.data.ResponseCode == 401) {
-                responseStore.setRes401(true)
-                responseStore.setResMessage(response.data.ResponseMessage)
-            } else {
-                setStatus(1)
-                setResponseMessage(response.data.responseMessage)
-                setChange(!change)
-            }
-
-        })
-    }
-    //2024 10. ay gibi kaldırıldı.
-    // useEffect(() => {
-    //     setDataFetch(true);
-    //     const auth = getAuth();
-    //     setUid(auth.currentUser.uid);
-    //     ProfileService.getProfile(auth.currentUser.uid, profileRequestCallback);
-    //     navigation.setOptions({
-    //         title: profileData.firstName + " " + profileData.lastName,
-    //     });
-    //     return () => { };
-    // }, []);
-    const profileRequest = () => {
-        setDataFetch(true);
-        ProfileService.getProfile(useAuthStore.getState()?.loginUser.id, profileRequestCallback);
-    };
-    const profileRequestCallback = (data) => {
-        setProfileData(data);
-        setDataFetch(false);
-    };
+    // Eski profil sorgulama kodu 2024 10. ay gibi kaldırıldı.
 
     const takePhoto = async () => {
         bottomSheetModalRef.current?.close()
@@ -269,13 +230,11 @@ const Index = ({ navigation }) => {
             if (result.assets !== undefined && result.assets !== null) {
                 imageCallback(result);
             }
-
-            // onClose();
         }
     };
 
     const pickImage = async () => {
-        bottomSheetModalRef.current?.close()
+        setPhotoModalVisible(false);
         let result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images'],
             allowsEditing: true,
@@ -323,7 +282,7 @@ const Index = ({ navigation }) => {
 
                     }));
                 })
-                .catch((error) => {  })
+                .catch((error) => { console.log("Profile image upload error:", error); })
                 .finally(() => {  });
 
         } catch (error) {
@@ -353,10 +312,10 @@ const Index = ({ navigation }) => {
                             <View style={{ flex: 1 }}>
                                 <View style={{ margin: 20, }}>
                                     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', }}>
-                                        <TouchableOpacity onPress={() => { bottomSheetModalRef.current?.present() }}>
-                                            <ImageBackground imageStyle={{ borderRadius: 40, }} style={{ height: 80, width: 80, }} source={{ uri: user.imagePath }} >
-                                                <View style={{ backgroundColor: Color.white, height: 25, width: 25, borderRadius: 15, alignItems: 'center', justifyContent: 'center', marginTop: 55, marginLeft: 55 }}>
-                                                    <AntDesign name="pluscircleo" size={25} color={Color.green} style={{}} />
+                                        <TouchableOpacity onPress={() => { setPhotoModalVisible(true) }}>
+                                            <ImageBackground imageStyle={{ borderRadius: 40, backgroundColor: Color.greyLight }} style={{ height: 80, width: 80, borderRadius: 40 }} source={{ uri: user.imagePath }} >
+                                                <View style={{ backgroundColor: Color.white, height: 26, width: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', marginTop: 54, marginLeft: 54 }}>
+                                                    <MaterialCommunityIcons name="plus-circle" size={26} color={Color.green} style={{}} />
                                                 </View>
                                             </ImageBackground>
                                         </TouchableOpacity>
@@ -396,17 +355,17 @@ const Index = ({ navigation }) => {
                                                 <Octicons name="dot-fill" size={12} color="lightgreen" />
                                                 <VText darkGrey bold style={{ fontSize: 13, textTransform: 'uppercase', marginLeft: 5 }}>{cultureResource.useCar}</VText>
                                             </View>
-                                            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                                                <View style={{ flexDirection: 'row' }}>
+                                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <View style={{ flexDirection: 'row', flex: 1, paddingRight: 10, alignItems: 'center' }}>
                                                     <Image style={{ height: 48, width: 48, }} source={{ uri: pickVehicle.brandLogo }} />
-                                                    <View style={{ marginLeft: 10 }}>
-                                                        <VText bold style={{ fontSize: 19, textTransform: 'uppercase', marginBottom: 2 }}>{pickVehicle.plate}</VText>
-                                                        <VText semibold greyText style={{ fontSize: 13, textTransform: 'capitalize', marginBottom: 2 }}>{pickVehicle.brand}</VText>
+                                                    <View style={{ marginLeft: 10, flex: 1 }}>
+                                                        <VText bold numberOfLines={1} style={{ fontSize: 19, textTransform: 'uppercase', marginBottom: 2 }}>{pickVehicle.plate}</VText>
+                                                        <VText semibold greyText numberOfLines={1} style={{ fontSize: 13, textTransform: 'capitalize', marginBottom: 2 }}>{pickVehicle.brand}</VText>
                                                     </View>
                                                 </View>
-                                                <TouchableOpacity onPress={() => { navigation.navigate('CarChange', { data: { vehicles: user.vehicles } }) }} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: Color.purple, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 30 }}>
+                                                <TouchableOpacity onPress={() => { navigation.navigate('CarChange', { data: { vehicles: user.vehicles } }) }} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: Color.purple, paddingVertical: 10, paddingHorizontal: 15, borderRadius: 30, flexShrink: 0 }}>
                                                     <MaterialIcons name="loop" size={18} color="white" />
-                                                    <VText bold style={{ marginLeft: 5, color: Color.white, fontSize: 15, textTransform: 'capitalize' }}>{cultureResource.change}</VText>
+                                                    <VText bold style={{ marginLeft: 5, color: Color.white, fontSize: 14, textTransform: 'capitalize' }}>{cultureResource.change}</VText>
                                                 </TouchableOpacity>
                                             </View>
                                         </View>
@@ -574,48 +533,43 @@ const Index = ({ navigation }) => {
                 </View>
             </View> */}
                             </View>
-                            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Color.headerGrey }}>
+                            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Color.headerGrey, paddingBottom: 200, paddingTop: 50 }}>
                                 <SvgUri height={40} width={80} uri='https://store.vitarnd.com/vitakids/assets/images/vita.svg' ></SvgUri>
                                 <Text style={{ fontSize: 16, marginVertical: 5, fontWeight: '600' }}>vita RnD Teknoloji AŞ</Text>
                                 <Text style={{ fontSize: 14, fontWeight: '400' }}>info@vitarnd.com</Text>
                                 <Text style={{ fontSize: 14, fontWeight: '400' }}>App version: {Constants.expoConfig.version}</Text>
                             </View>
-                            <View style={{ paddingBottom: 150, backgroundColor: Color.headerGrey }}>
-
-                            </View>
                         </ScrollView >
-                        <BottomSheetModalProvider style={{ flex: 1, zIndex: 10 }}>
-                            <BottomSheetModal
-                                enableDismissOnClose={true}
-                                ref={bottomSheetModalRef}
-                                index={0}
-                                snapPoints={snapPoints}
-                                backdropComponent={renderBackdrop}
-                                onChange={handleSheetChanges}
-                            >
-                                <View style={{ flex: 1, paddingHorizontal: 20 }}>
-                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, }}>
+                        <Modal
+                            visible={photoModalVisible}
+                            transparent={true}
+                            animationType="slide"
+                            onRequestClose={() => setPhotoModalVisible(false)}
+                        >
+                            <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} activeOpacity={1} onPress={() => setPhotoModalVisible(false)}>
+                                <TouchableOpacity activeOpacity={1} style={{ backgroundColor: 'white', paddingHorizontal: 20, paddingBottom: 40, borderTopLeftRadius: 20, borderTopRightRadius: 20 }}>
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 20, }}>
                                         <VText bold darkGrey style={{ fontSize: 18, }}>{cultureResource.changeProfilePhoto}</VText>
-                                        <TouchableOpacity style={{ paddingVertical: 5, paddingVertical: 5 }} onPress={() => { bottomSheetModalRef.current?.close() }}>
+                                        <TouchableOpacity style={{ paddingVertical: 5 }} onPress={() => setPhotoModalVisible(false)}>
                                             <AntDesign name="close" size={24} color={Color.darkGrey} />
                                         </TouchableOpacity>
                                     </View>
-                                    <TouchableOpacity onPress={() => { takePhoto() }} style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', padding: 20, borderWidth: 1, borderRadius: 10, borderColor: Color.purple }}>
+                                    <TouchableOpacity onPress={() => { setPhotoModalVisible(false); takePhoto(); }} style={{ marginTop: 20, flexDirection: 'row', alignItems: 'center', padding: 20, borderWidth: 1, borderRadius: 10, borderColor: Color.purple }}>
                                         <Entypo name="camera" size={24} color={Color.darkGrey} />
                                         <VText bold darkGrey style={{ fontSize: 15, marginLeft: 10 }}>{cultureResource.takeAPhoto}</VText>
                                     </TouchableOpacity>
-                                    <TouchableOpacity onPress={() => { pickImage() }} style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', padding: 20, borderWidth: 1, borderRadius: 10, borderColor: Color.purple, marginBottom: 10 }}>
+                                    <TouchableOpacity onPress={() => { setPhotoModalVisible(false); pickImage(); }} style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', padding: 20, borderWidth: 1, borderRadius: 10, borderColor: Color.purple, marginBottom: 10 }}>
                                         <FontAwesome name="photo" size={24} color="black" />
                                         <VText bold darkGrey style={{ fontSize: 15, marginLeft: 10 }}>{cultureResource.chooseFromLibrary}</VText>
                                     </TouchableOpacity>
-                                </View>
-                            </BottomSheetModal>
-                        </BottomSheetModalProvider>
+                                </TouchableOpacity>
+                            </TouchableOpacity>
+                        </Modal>
                         <Modal
                             animationType="slide"
                             transparent={true}
                             visible={change}
-                            onRequestClose={() => { }}>
+                            onRequestClose={() => { setChange(false) }}>
                             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', }}>
                                 <View style={styles.modalView}>
                                     {status == 0 ? <AntDesign name="check" size={60} color="green" /> : <AntDesign name="close" size={60} color="red" />}

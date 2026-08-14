@@ -1,4 +1,5 @@
-import { TouchableOpacity, Text, View, StyleSheet, SafeAreaView, Image, Dimensions, Linking } from 'react-native'
+import { TouchableOpacity, Text, View, StyleSheet, Image, Dimensions, Linking } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context';
 import React from 'react'
 import { getAuth, signOut } from 'firebase/auth'
 import VText from '../../../components/VText'

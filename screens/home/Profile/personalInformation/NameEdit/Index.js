@@ -101,7 +101,7 @@ const Index = ({ navigation, route }) => {
         <View style={{ flex: 1, backgroundColor: Color.white, paddingTop: Constants.statusBarHeight }}>
           <View style={{ flexDirection: 'row', paddingVertical: 15, alignItems: 'center', paddingHorizontal: 20 }}>
             <TouchableOpacity onPress={() => { navigation.goBack() }}>
-              <AntDesign name="arrowleft" size={20} color="black" />
+              <MaterialCommunityIcons name="arrow-left" size={20} color="black" />
             </TouchableOpacity>
             <VText semibold style={{ fontSize: 19, marginLeft: 20 }}>{cultureResource.edit}</VText>
           </View>
@@ -125,7 +125,7 @@ const Index = ({ navigation, route }) => {
         animationType="slide"
         transparent={true}
         visible={change}
-        onRequestClose={() => { }}>
+        onRequestClose={() => { setChange(false) }}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', }}>
           <View style={styles.modalView}>
             {status == 0 ? <AntDesign name="check" size={60} color="green" /> : <AntDesign name="close" size={60} color="red" />}

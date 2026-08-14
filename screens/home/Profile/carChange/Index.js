@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { View, Text, TouchableOpacity, ScrollView } from 'react-native'
 import VText from '../../../../components/VText'
-import { AntDesign } from '@expo/vector-icons';
+import { AntDesign, MaterialCommunityIcons } from '@expo/vector-icons';
 import Color from '../../../../components/Color';
 import CarChangeComponent from './../../../../components/ProfilMain/CarChange/CarChangeComponent'
 import ChangeCurrentVehicle from '../../../../services/vita/ChangeCurrentVehicle';
@@ -69,7 +69,7 @@ const Index = ({ navigation, route }) => {
         <View style={{ flex: 1, paddingHorizontal: 20 }}>
           <View>
             <TouchableOpacity onPress={() => { navigation.goBack() }}>
-              <AntDesign style={{ marginTop: 25 }} name="arrowleft" size={26} color="black" />
+              <MaterialCommunityIcons style={{ marginTop: 25 }} name="arrow-left" size={26} color="black" />
             </TouchableOpacity>
             <VText semibold style={{ fontSize: 24, marginTop: 30, paddingHorizontal: 2, fontWeight: '600' }}>{cultureResource.changeCar}</VText>
             <VText regular style={{ fontSize: 15, marginTop: 10, color: Color.greyText, paddingHorizontal: 2 }}>{cultureResource.changePick}</VText>

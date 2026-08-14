@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { StyleSheet, Text, TouchableOpacity, View, Image, ScrollView, Button, SafeAreaView, Alert, } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View, Image, ScrollView, Button, Alert, } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Color from '../../../components/Color';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import Checkbox from 'expo-checkbox';
@@ -185,12 +186,6 @@ const styles = StyleSheet.create({
     text: { fontSize: 14, color: Color.greyText, marginTop: 10 },
     body: {
     },
-    bottomContainer: {
-        position: 'absolute',
-        bottom: 30,
-        width: '100%',
-        paddingHorizontal: 25
-    },
     cultureContainer: {
         paddingHorizontal: 20,
         paddingVertical: 16,
@@ -216,7 +211,7 @@ const styles = StyleSheet.create({
     },
     bottomContainer: {
         position: 'absolute',
-        bottom: 30,
+        bottom: 50,
         width: '100%',
         paddingHorizontal: 25
     },

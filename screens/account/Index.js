@@ -1,6 +1,6 @@
 import { Modal, StyleSheet, Text, Pressable, View } from 'react-native';
 
-import React from 'react'
+import React, { useRef } from 'react'
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
@@ -27,9 +27,16 @@ const Index = () => {
     const errorMessage = useSelector((state) => state.main.errorMessage);
     const hasError = useSelector((state) => state.main.hasError);
     const cultureStore = useCultureStore((state) => state);
+    const navigationRef = useRef();
 
     return (
-        <>
+        <NavigationContainer
+            ref={navigationRef}
+            onStateChange={() => {
+                const currentRouteName = navigationRef.current.getCurrentRoute().name;
+                console.log("Current screen:", currentRouteName);
+            }}
+        >
             {loading == true && (
                 <LottieView
                     autoPlay
@@ -47,16 +54,14 @@ const Index = () => {
                 />
             )}
 
-            <NavigationContainer>
-                <Stack.Navigator>
-                    <Stack.Screen name="AppIntro" component={AppIntro} options={{ headerShown: false }} />
-                    <Stack.Screen name="CultureSelection" component={CultureSelection} options={{ headerShown: false }} />
-                    <Stack.Screen name="Login" component={Login} options={{ headerShown: false }} />
-                    <Stack.Screen name="LoginPassword" component={LoginPassword} options={{ headerShown: false }} />
-                    <Stack.Screen name="Otp" component={Otp} options={{ headerShown: false }} />
-                    <Stack.Screen name="Contract" component={Contract} options={{ headerShown: false }} />
-                </Stack.Navigator>
-            </NavigationContainer>
+            <Stack.Navigator>
+                <Stack.Screen name="AppIntro" component={AppIntro} options={{ headerShown: false }} />
+                <Stack.Screen name="CultureSelection" component={CultureSelection} options={{ headerShown: false }} />
+                <Stack.Screen name="Login" component={Login} options={{ headerShown: false }} />
+                <Stack.Screen name="LoginPassword" component={LoginPassword} options={{ headerShown: false }} />
+                <Stack.Screen name="Otp" component={Otp} options={{ headerShown: false }} />
+                <Stack.Screen name="Contract" component={Contract} options={{ headerShown: false }} />
+            </Stack.Navigator>
 
             <Modal
                 animationType="slide"
@@ -75,7 +80,7 @@ const Index = () => {
                     </View>
                 </View>
             </Modal>
-        </>
+        </NavigationContainer>
     )
 }
 

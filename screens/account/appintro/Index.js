@@ -175,7 +175,7 @@ const Index = ({ navigation }) => {
 
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
-            <ScrollView>
+            <ScrollView contentContainerStyle={{ flexGrow: 1, paddingBottom: 150 }}>
                 <View style={styles.cultureSelectorContainer}>
                     <TouchableOpacity style={styles.cultureSelectionButton} onPress={() => {
                         navigation.navigate('CultureSelection')
@@ -204,30 +204,29 @@ const Index = ({ navigation }) => {
                         {barArray}
                     </View>
                 </View>
-                <View style={{ position: 'absolute', bottom: 120, width: '100%', paddingHorizontal: 25 }}>
-                    <View style={{ flex: 1, marginBottom: 10 }}>
-                        <VButton primary onPress={() => { navigation.navigate('Login') }}>
-                            <VText white bold style={{ fontSize: 17 }}>{
-                                cultureStore.culture == "tr" ? "Telefon Numarası ile " :
-                                    cultureStore.culture == 'en' ? "Phone Number" :
-                                        cultureStore.culture == 'de' ? 'Telefonnummer' :
-                                            'Telefon numarası ile giriş yapın'}
-                            </VText>
-                        </VButton>
-                    </View>
-                    <View style={{ flex: 1, }}>
-                        <VButton style={{ backgroundColor: Color.white, borderColor: Color.purple, borderWidth: 1, }} onPress={() => { navigation.navigate('LoginPassword') }}>
-                            <VText purple bold style={{ fontSize: 17, }}>{
-                                cultureStore.culture == "tr" ? "Kullanıcı Adı ve Şifre ile" :
-                                    cultureStore.culture == 'en' ? "Username and Password" :
-                                        cultureStore.culture == 'de' ? 'Benutzername und Passwort' :
-                                            'Kullanıcı adı ve şifre ile giriş yapın'}
-                            </VText>
-                        </VButton>
-                    </View>
-
-                </View>
             </ScrollView>
+            <View style={{ position: 'absolute', bottom: 120, width: '100%', paddingHorizontal: 25, zIndex: 10 }}>
+                <View style={{ flex: 1, marginBottom: 10 }}>
+                    <VButton primary onPress={() => { navigation.navigate('Login') }}>
+                        <VText white bold style={{ fontSize: 17 }}>{
+                            cultureStore.culture == "tr" ? "Telefon Numarası ile " :
+                                cultureStore.culture == 'en' ? "Phone Number" :
+                                    cultureStore.culture == 'de' ? 'Telefonnummer' :
+                                        'Telefon numarası ile giriş yapın'}
+                        </VText>
+                    </VButton>
+                </View>
+                <View style={{ flex: 1, }}>
+                    <VButton style={{ backgroundColor: Color.white, borderColor: Color.purple, borderWidth: 1, }} onPress={() => { navigation.navigate('LoginPassword') }}>
+                        <VText purple bold style={{ fontSize: 17, }}>{
+                            cultureStore.culture == "tr" ? "Kullanıcı Adı ve Şifre ile" :
+                                cultureStore.culture == 'en' ? "Username and Password" :
+                                    cultureStore.culture == 'de' ? 'Benutzername und Passwort' :
+                                        'Kullanıcı adı ve şifre ile giriş yapın'}
+                        </VText>
+                    </VButton>
+                </View>
+            </View>
             <StatusBar backgroundColor={Color.base} barStyle='dark-content'></StatusBar>
         </View>
     )

@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View, Platform, Animated, Linking , Alert } from 'react-native';
+import { StyleSheet, Text, View, Platform, Animated } from 'react-native';
 import Splash from './screens/splash/Index'
 import HomeNavigator from './screens/home/HomeNavigator'
 import AccountNavigator from './screens/account/Index'
@@ -30,6 +30,8 @@ import 'react-native-reanimated';
 import { configureReanimatedLogger } from 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import GetVersion from './services/vita/GetVersion';
+import UpdateRequired from './components/UpdateRequired';
+import Auth from './services/vita/Auth';
 import {compareVersions} from 'compare-versions';
 
 configureReanimatedLogger({
@@ -190,6 +192,7 @@ export default function App() {
   const notificationListener = useRef();
   const [isLoaded, setIsLoaded] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(undefined);
+  const [latestVersion, setLatestVersion] = useState(null);
   const mainStore = useMainStore((state) => state);
   const cultureStore = useCultureStore((state) => state);
   const authStore = useAuthStore((state) => state);
@@ -271,35 +274,21 @@ export default function App() {
   useEffect(() => {
     versionControl()
   }, []);
+  useEffect(() => {
+    if (authStore.isAuthenticated && mainStore.pushToken) {
+      Auth.UpdateExpoToken_Async({ token: mainStore.pushToken }).catch(err => {
+        console.log("Failed to sync push token to server: ", err);
+      });
+    }
+  }, [authStore.isAuthenticated, mainStore.pushToken]);
   function versionControl() {
     const runtimeVersion = Constants.expoConfig?.version
-    console.log('geldi' , runtimeVersion)
+
     GetVersion.Get().then(response => {
-      console.log('burası geliyor mu ')
       if (response.data.responseCode == 200) {
-        console.log('asdasd',response.data.data)
         if (compareVersions(runtimeVersion, response.data.data) === -1) {
-          Alert.alert(
-            "Yeni Sürüm Mevcut",
-            "Uygulamayı kullanmaya devam edebilmek için güncelleme yapmalısınız.",
-            [
-              {
-                text: "Güncelle",
-                onPress: () => {
-                  const storeUrl = Platform.select({
-                    ios: "https://apps.apple.com/tr/app/vitadrive-transfer/id1667275115",
-                    android: "https://play.google.com/store/apps/details?id=com.vitarnd.vitaDrive.Transfer&pli=1"
-                  });
-                  Linking.openURL(storeUrl);
-                },
-              },
-            ],
-            { cancelable: false }
-          );
+          setLatestVersion(response.data.data);
         }
-      }
-      else {
-        console.log('response sonuc else....', response.data)
       }
     }).catch((error) => {
       console.error(error)
@@ -336,24 +325,36 @@ export default function App() {
     return <Splash />;
   }
 
+  if (latestVersion != null) {
+    return (
+      <SafeAreaProvider>
+        <UpdateRequired latestVersion={latestVersion} />
+      </SafeAreaProvider>
+    );
+  }
+
   if (authStore.isAuthenticated == true) {
     return (
-      <AnimatedAppLoader>
-        <Provider store={store}>
-          <GestureHandlerRootView style={{ flex: 1 }}>
-            <HomeNavigator />
-          </GestureHandlerRootView>
-        </Provider>
-      </AnimatedAppLoader>
+      <SafeAreaProvider>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <AnimatedAppLoader>
+            <Provider store={store}>
+              <HomeNavigator />
+            </Provider>
+          </AnimatedAppLoader>
+        </GestureHandlerRootView>
+      </SafeAreaProvider>
     );
   }
   else if (authStore.isAuthenticated == false) {
     return (
-      // <AnimatedAppLoader>
-      <Provider store={store}>
-        <AccountNavigator />
-      </Provider>
-      // </AnimatedAppLoader>
+      <SafeAreaProvider>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <Provider store={store}>
+            <AccountNavigator />
+          </Provider>
+        </GestureHandlerRootView>
+      </SafeAreaProvider>
     )
   }
   else {

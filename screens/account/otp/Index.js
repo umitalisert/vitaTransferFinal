@@ -1,4 +1,5 @@
-import { Image, SafeAreaView, StyleSheet, TouchableOpacity, View, TextInput } from 'react-native'
+import { Image, StyleSheet, TouchableOpacity, View, TextInput } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context';
 import React, { useEffect, useRef, useState } from 'react'
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import Color from '../../../components/Color';

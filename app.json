@@ -2,7 +2,7 @@
   "expo": {
     "name": "vitaDriveTransfer",
     "slug": "vitadrive-transfer",
-    "version": "1.4.7",
+    "version": "2.0.7",
     "orientation": "portrait",
     "icon": "./assets/iconApp.png",
     "userInterfaceStyle": "light",
@@ -20,11 +20,13 @@
     ],
     "ios": {
       "supportsTablet": false,
-      "buildNumber": "1.4.7",
+      "buildNumber": "2.0.7",
       "infoPlist": {
         "LSApplicationQueriesSchemes": [
           "lyft",
-          "lyft"
+          "whatsapp",
+          "comgooglemaps",
+          "yandexmaps"
         ],
         "UIBackgroundModes": [
           "location",
@@ -43,7 +45,7 @@
       "bundleIdentifier": "com.vitarnd.vitaDrive.Transfer"
     },
     "android": {
-      "versionCode": 38,
+      "versionCode": 48,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptiveIcon.png",
         "backgroundColor": "#FFFFFF"

@@ -60,11 +60,11 @@ const Index = ({ }) => {
     transferType4: 'Shuttle',
     earnings: 'Kazançlar',
     transfers: 'Transferler',
-    passsenger: 'Yolcu',
+    passenger: 'Yolcu',
   }
   const culture_de = {
     hello: 'Hallo',
-    pastTransfer: 'Ihre vergangenen Überweisungen',
+    pastTransfer: 'Ihre vergangenen Transfers',
     change: 'ändern',
     startDate: 'Anfangsdatum',
     endDate: 'Enddatum',
@@ -74,7 +74,7 @@ const Index = ({ }) => {
     transferType3: 'Chauffeur',
     transferType4: 'Shuttlebus',
     earnings: 'Verdienste',
-    transfers: 'Überweisungen',
+    transfers: 'Transfers',
     passenger: 'Passagier',
   }
   const cultureResource = (cultureStore.culture == 'tr' ? culture_tr : cultureStore.culture == 'en' ? culture_en : cultureStore.culture == 'de' ? culture_de : culture_tr);
@@ -130,7 +130,7 @@ const Index = ({ }) => {
   const [transferTotal, setTransferTotal] = useState();
   function list() {
     dispatch(setLoading(true));
-    Accrument.Get(moment(startDate).format('YYYY MM DD'), moment(endDate).format('YYYY MM DD'), cultureStore.culture).then(response => {
+    Accrument.Get(moment(startDate).format('YYYY-MM-DD'), moment(endDate).format('YYYY-MM-DD'), cultureStore.culture).then(response => {
       if (response.data.responseCode == 200) {
         setInvoiceData(response.data.data)
         dispatch(setLoading(false));

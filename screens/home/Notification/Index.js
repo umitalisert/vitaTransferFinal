@@ -1,11 +1,10 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { View, Text, ScrollView } from 'react-native'
 import Notification from '../../../services/vita/Notification';
 import Color from '../../../components/Color';
 import { useDispatch } from 'react-redux'
 import useCultureStore from '../../../zustand/CultureStore'
 import VText from '../../../components/VText';
-import { useState } from 'react';
 import { Octicons } from '@expo/vector-icons';
 import moment from "moment";
 import { StatusBar } from 'expo-status-bar';
@@ -14,6 +13,7 @@ import Constants from 'expo-constants';
 import { setErrorMessage, setHasError, setLoading } from '../../../redux/slices/mainSlice';
 import useAuthStore from '../../../zustand/AuthStore';
 import useResponseStore from '../../../zustand/ResponseStore';
+import { useFocusEffect } from '@react-navigation/native';
 
 const Index = () => {
   const responseStore = useResponseStore((state) => state)
@@ -40,24 +40,33 @@ const Index = () => {
     dispatch(setLoading(true));
     Notification.Get(cultureStore.culture).then(response => {
       if (response.data.responseCode == 200) {
-        setNotificationData(response.data.data)
+        setNotificationData(response.data.data != null ? response.data.data : []);
         dispatch(setLoading(false));
       }
       else if (response.data.ResponseCode == 401) {
-        responseStore.setRes401(true)
-        responseStore.setResMessage(response.data.ResponseMessage)
+        responseStore.setRes401(true);
+        responseStore.setResMessage(response.data.ResponseMessage);
         dispatch(setLoading(false));
       }
       else {
+        dispatch(setHasError(true));
+        if (response.data.responseMessage) {
+          dispatch(setErrorMessage(response.data.responseMessage));
+        }
         dispatch(setLoading(false));
       }
-
     }).catch((error) => {
-    })
+      dispatch(setLoading(false));
+      dispatch(setHasError(true));
+      dispatch(setErrorMessage(cultureStore.culture == 'tr' ? 'Bağlantı hatası oluştu.' : 'Connection error.'));
+    });
   }
-  useEffect(() => {
-    list()
-  }, [])
+  useFocusEffect(
+    useCallback(() => {
+      list();
+      return () => {};
+    }, [])
+  );
 
   return (
     <>
@@ -93,7 +102,7 @@ const Index = () => {
               <View style={{
                 backgroundColor: Color.white, flex: 1, borderRadius: 10,
                 shadowColor: '#000', shadowOffset: { width: 0, height: 2, }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5, paddingHorizontal: 10,
-                flex: 1, alignItems: 'center', paddingVertical: 15, borderRadius: 10, borderWidth: 1, borderColor: Color.primary, marginVertical: 20, marginHorizontal: 10, flexDirection: 'row', justifyContent: 'center'
+                alignItems: 'center', paddingVertical: 15, borderWidth: 1, borderColor: Color.primary, marginVertical: 20, marginHorizontal: 10, flexDirection: 'row', justifyContent: 'center'
               }}>
                 <AntDesign name="warning" size={24} color="orange" />
                 <VText bold purple style={{ fontSize: 15, marginLeft: 10, textAlign: 'center' }}>{cultureResource.nullNotification}</VText>

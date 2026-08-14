@@ -23,38 +23,37 @@ const Index = ({ navigation, route }) => {
     myDocument: 'My Document',
     documentShare: 'Document Share',
     uploadDocument:'Upload Document',
-    history: 'Datum des Inkrafttretens: Auf unbestimmte Zeit',
-    history1: 'Datum des Inkrafttretens:',
+    history: 'Effective Date: Indefinitely',
+    history1: 'Effective Date:',
     missingDocument:'Missing Document',
     share:'Share',
-    select : 'select the documents you want to share'
+    select : 'Select the documents you want to share'
   }
   const culture_tr = {
     myDocument: 'Belgelerim',
     documentShare: 'Belge Paylaş',
     uploadDocument:'Belge Yükle',
-    history: 'Datum des Inkrafttretens: Auf unbestimmte Zeit',
-    history1: 'Datum des Inkrafttretens:',
+    history: 'Geçerlilik Tarihi: Süresiz',
+    history1: 'Geçerlilik Tarihi:',
     missingDocument:'Eksik Belge',
     share:'Paylaş',
     select : 'Paylaşmak istediğiniz belgeleri seçin'
   }
   const culture_de = {
-    myDocument: 'Fahrzeugdokumentation',
+    myDocument: 'Meine Dokumente',
     documentShare: 'Dokument teilen',
     uploadDocument:'Hochladen',
     history: 'Datum des Inkrafttretens: Auf unbestimmte Zeit',
     history1: 'Datum des Inkrafttretens:',
     missingDocument:'fehlendes Dokument',
-    share:'Aktie',
+    share:'Teilen',
     select : 'Wählen Sie die Dokumente aus, die Sie teilen möchten',
-
-    
   }
   const cultureResource = (cultureStore.culture == 'tr' ? culture_tr : cultureStore.culture == 'en' ? culture_en : cultureStore.culture == 'de' ? culture_de : culture_tr);
 
   const shareDocuments = async (url) => {
     try {
+      if (!url) return;
       let str = url.split("/");
       const fileName = str.pop();
       const fileUri = FileSystem.cacheDirectory + fileName;
@@ -125,7 +124,7 @@ const Index = ({ navigation, route }) => {
         )}
 
       </ScrollView>
-      <TouchableOpacity onPress={() => { shareDocuments(url) }} style={control == -1 ? styles.shareNoButton : styles.shareButton}>
+      <TouchableOpacity disabled={control == -1} onPress={() => { shareDocuments(url) }} style={control == -1 ? styles.shareNoButton : styles.shareButton}>
         <SimpleLineIcons name="share-alt" size={18} color="white" />
         <VText semibold white style={{ fontSize: 15, marginLeft: 5 }}>{cultureResource.share}</VText>
       </TouchableOpacity>

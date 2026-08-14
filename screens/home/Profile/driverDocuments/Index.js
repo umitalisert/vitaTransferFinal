@@ -24,7 +24,7 @@ const Index = ({ navigation }) => {
     <View style={{ flex: 1, backgroundColor: Color.white }}>
       <View style={{ flexDirection: 'row', paddingVertical: 15, alignItems: 'center', paddingHorizontal: 20 }}>
         <TouchableOpacity onPress={() => { navigation.goBack() }}>
-          <AntDesign name="arrowleft" size={20} color="black" />
+          <MaterialCommunityIcons name="arrow-left" size={20} color="black" />
         </TouchableOpacity>
         <VText semibold style={{ fontSize: 19, marginLeft: 20 }}>Sürücü Belgeleri</VText>
       </View>

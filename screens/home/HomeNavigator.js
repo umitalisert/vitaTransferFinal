@@ -1,4 +1,4 @@
-import { Modal, StyleSheet, Text, Pressable, View, ScrollView } from 'react-native';
+import { Modal, StyleSheet, Text, Pressable, View, ScrollView, Platform } from 'react-native';
 import React, { useEffect, useRef, useState } from 'react'
 import { useFocusEffect } from '@react-navigation/native';
 import { useDispatch, useSelector } from 'react-redux';
@@ -11,6 +11,7 @@ import VButton from '../../components/VButton';
 import Color from '../../components/Color';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import WorkOrderIndex from './WorkOrder/Index'
 import Notification from './Notification/Index'
 import Qr from './Qr/Index'
@@ -20,7 +21,7 @@ import Colors from '../../components/Color';
 import useCultureStore from '../../zustand/CultureStore';
 import * as Location from 'expo-location';
 import { List, Portal, Provider } from 'react-native-paper';
-import BottomSheet , {
+import BottomSheet, {
   BottomSheetModal,
   BottomSheetModalProvider,
   BottomSheetBackdrop,
@@ -47,6 +48,10 @@ import useResponseStore from './../../zustand/ResponseStore'
 import * as TaskManager from 'expo-task-manager';
 const Tab = createBottomTabNavigator();
 const Index = () => {
+  const insets = useSafeAreaInsets();
+  // Android'de Detail ekranına gidip gelince insets yeniden hesaplanıp
+  // tab bar kayar. Bu yüzden mount anındaki değeri bir kez sabitliyoruz.
+  const stableBottomInset = useRef(Math.max(insets.bottom, 24));
   const responseStore = useResponseStore((state) => state);
   const authStore = useAuthStore((state) => state);
 
@@ -68,7 +73,7 @@ const Index = () => {
   const errorMessage = useSelector((state) => state.main.errorMessage);
   const profileStore = useProfileStore((state) => state);
   const hasError = useSelector((state) => state.main.hasError);
-  
+
   moment.locale(cultureStore.culture);
   const [startDate, setStartDate] = useState(moment());
   const [checkLocation, setCheckLocation] = useState(false);
@@ -93,7 +98,6 @@ const Index = () => {
     finish: 'Finish',
     amount: 'Amount',
     driverNote: 'Driver Note',
-    sendFollowLink: 'Send Follow Link',
     addAdditionalService: 'Add Additional Service',
     dropTransfer: 'Drop Transfer',
     startLocation: 'STARTING POINT',
@@ -214,7 +218,6 @@ const Index = () => {
     notCompleted: 'Tamamlanmadı',
     start: 'Sürüşe Başla',
     continue: 'Sürüşe devam et',
-    sendFollowLink: "Takip Linki Gönder",
     show: 'GÖRÜNTÜLE',
     noUetds: 'U-ETDS belgesi oluşturulmadı',
     uetds: 'U-ETDS belgesi mevcut',
@@ -267,7 +270,6 @@ const Index = () => {
     finish: 'Beenden',
     amount: 'Menge',
     driverNote: 'Fahrerhinweis',
-    sendFollowLink: 'Senden Folgen Verknüpfung',
     addAdditionalService: 'Zusätzlichen Service hinzufügen',
     dropTransfer: 'Drop-Transfer',
     company: 'Unternehmen',
@@ -410,7 +412,7 @@ const Index = () => {
       workOrderData.workOrderList.filter(workorder => {
         return workorder.isAccepted === 0;
       }).length > 0 && (
-          bottomSheetModalRef.current?.expand()
+          bottomSheetModalRef.current?.present()
         )
     }
   }, [workOrderData])
@@ -418,160 +420,162 @@ const Index = () => {
   useEffect(() => {
     if (profileStore.refresh == true) {
       profileStore.setRefresh(false);
-      bottomSheetModalRef.current?.close();
+      bottomSheetModalRef.current?.dismiss();
     }
   }, [profileStore.refresh])
 
-  
-  return (
-    <Provider>
-      {(loading == true) && (
-        <LottieView
-          autoPlay
-          style={{
-            position: 'absolute',
-            zIndex: 3,
-            height: 150,
-            alignSelf: 'center',
-            top: '50%',
-            elevation: 5,
-            marginTop: -75,
-            aspectRatio: 1
-          }}
-          source={require('../../assets/loading.json')}
-        />
-      )}
-      <NavigationContainer>
-        <Tab.Navigator
-          screenOptions={({ route }) => ({
-            tabBarIcon: ({ focused, color, size }) => {
-              let iconName;
 
-              if (route.name === 'WorkOrder') {
-                iconName = 'home'
-              }
-              else if (route.name === 'Notification') {
-                iconName = 'bell'
-              }
-              else if (route.name === 'Qr') {
-                iconName = 'qrcode'
-              }
-              else if (route.name === 'Invoice') {
-                return <Ionicons name='receipt' size={size} color={color} />;
-              }
-              else if (route.name === 'Profile') {
-                iconName = 'account'
-              }
-              return <MaterialCommunityIcons name={iconName} size={size} color={color} />;
-            },
-            tabBarActiveTintColor: Color.darkGrey,
-            tabBarShowLabel: false,
-            tabBarActiveBackgroundColor: Colors.white,
-            tabBarItemStyle: {
-              borderRadius: 1000,
-              height: 50,
-              marginTop: 8,
-              marginHorizontal: '2.5%'
-            },
-            tabBarStyle: {
-              position: 'absolute',
-              bottom: 20,
-              height: 68,
-              zIndex: 2,
-              backgroundColor: Color.darkGrey,
-              borderRadius: 1000,
-              marginHorizontal: 20,
-              shadowColor: "#000",
-              shadowOffset: {
-                width: 0,
-                height: 2,
+  const navigationRef = useRef();
+  return (
+    <NavigationContainer
+      ref={navigationRef}
+      onStateChange={() => {
+        const previousRouteName = navigationRef.current.getCurrentRoute().name;
+        console.log("Current screen:", previousRouteName);
+      }}
+    >
+      <BottomSheetModalProvider>
+        <Provider>
+          {(loading == true) && (
+            <LottieView
+              autoPlay
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                zIndex: 9999,
+                height: 150,
+                alignSelf: 'center',
+                top: '50%',
+                marginTop: -75,
+                aspectRatio: 1
+              }}
+              source={require('../../assets/loading.json')}
+            />
+          )}
+
+          <Tab.Navigator
+            screenOptions={({ route }) => ({
+              tabBarIcon: ({ focused, color, size }) => {
+                let iconName;
+
+                if (route.name === 'WorkOrder') {
+                  iconName = 'home'
+                }
+                else if (route.name === 'Notification') {
+                  iconName = 'bell'
+                }
+                else if (route.name === 'Qr') {
+                  iconName = 'qrcode'
+                }
+                else if (route.name === 'Invoice') {
+                  return <Ionicons name='receipt' size={size} color={color} />;
+                }
+                else if (route.name === 'Profile') {
+                  iconName = 'account'
+                }
+                return <MaterialCommunityIcons name={iconName} size={size} color={color} />;
               },
-              shadowOpacity: 0.25,
-              shadowRadius: 3.84,
-              elevation: 5,
-            },
-          })}
-        >
-          <Tab.Screen name="WorkOrder" component={WorkOrderIndex} options={{ headerShown: false, unmountOnBlur: true }} />
-          <Tab.Screen name="Notification" component={Notification} options={{ headerShown: false }} />
-          <Tab.Screen name="Qr" component={Qr} options={{ headerShown: false, unmountOnBlur: true }} />
-          <Tab.Screen name="Invoice" component={Invoice} options={{ headerShown: false }} />
-          <Tab.Screen name="Profile" component={Profile} options={{ headerShown: false }} />
-        </Tab.Navigator>
-      </NavigationContainer>
-      <Portal>
-        <Modal
-          animationType="slide"
-          transparent={true}
-          visible={hasError}
-          onRequestClose={() => { dispatch(setHasError(false)); dispatch(setErrorMessage('')) }}>
-          <View style={styles.centeredView}>
-            <View style={styles.modalView}>
-              <MaterialCommunityIcons name="alert-circle-outline" size={40} color={Color.red} />
-              <VText medium style={{ marginTop: 20 }}>{errorMessage}</VText>
-              <VButton secondary style={{ paddingHorizontal: 40, paddingVertical: 10, marginTop: 25 }}
-                onPress={() => { dispatch(setHasError(false)); dispatch(setErrorMessage('')) }}>
-                <VText white bold>{cultureStore.culture == 'tr' ? 'Tamam' : cultureStore.culture == 'en' ? 'OK' : cultureStore.culture == 'de' ? 'OK' : 'Tamam'}</VText>
-              </VButton>
+              tabBarActiveTintColor: Color.darkGrey,
+              tabBarShowLabel: false,
+              tabBarHideOnKeyboard: false,
+              tabBarActiveBackgroundColor: Colors.white,
+              tabBarItemStyle: {
+                borderRadius: 1000,
+                height: 50,
+                marginTop: 8,
+                marginHorizontal: '2.5%'
+              },
+              tabBarStyle: {
+                position: 'absolute',
+                bottom: Platform.OS === 'ios' ? 30 : 34,
+                height: 68,
+                zIndex: 2,
+                backgroundColor: Color.darkGrey,
+                borderRadius: 1000,
+                marginHorizontal: 20,
+                shadowColor: "#000",
+                shadowOffset: {
+                  width: 0,
+                  height: 2,
+                },
+                shadowOpacity: 0.25,
+                shadowRadius: 3.84,
+                elevation: 5,
+              },
+            })}
+          >
+            <Tab.Screen name="WorkOrder" component={WorkOrderIndex} options={{ headerShown: false, unmountOnBlur: true }} />
+            <Tab.Screen name="Notification" component={Notification} options={{ headerShown: false }} />
+            <Tab.Screen name="Qr" component={Qr} options={{ headerShown: false, unmountOnBlur: true }} />
+            <Tab.Screen name="Invoice" component={Invoice} options={{ headerShown: false }} />
+            <Tab.Screen name="Profile" component={Profile} options={{ headerShown: false }} />
+          </Tab.Navigator>
+          <Modal
+            animationType="slide"
+            transparent={true}
+            visible={hasError}
+            onRequestClose={() => { dispatch(setHasError(false)); dispatch(setErrorMessage('')) }}>
+            <View style={styles.centeredView}>
+              <View style={styles.modalView}>
+                <MaterialCommunityIcons name="alert-circle-outline" size={40} color={Color.red} />
+                <VText medium style={{ marginTop: 20 }}>{errorMessage}</VText>
+                <VButton secondary style={{ paddingHorizontal: 40, paddingVertical: 10, marginTop: 25 }}
+                  onPress={() => { dispatch(setHasError(false)); dispatch(setErrorMessage('')) }}>
+                  <VText white bold>{cultureStore.culture == 'tr' ? 'Tamam' : cultureStore.culture == 'en' ? 'OK' : cultureStore.culture == 'de' ? 'OK' : 'Tamam'}</VText>
+                </VButton>
+              </View>
             </View>
-          </View>
-        </Modal>
-        <Modal
-          animationType="slide"
-          transparent={true}
-          visible={checkLocation}
-          onRequestClose={() => { }}>
-          <View style={styles.centeredView}>
-            <View style={styles.modalView}>
-              <Entypo name="location" size={60} color="black" />
-              <Text style={{ marginTop: 25, fontSize: 18, textTransform: 'uppercase' }}>{cultureResource.locationTitleModal}</Text>
-              <VText medium style={{ marginTop: 20, textAlign: 'center', fontSize: 14 }}>{cultureResource.errorMessageLocation}</VText>
-              <VButton secondary style={{ paddingHorizontal: 40, paddingVertical: 10, marginTop: 25 }}
-                onPress={() => { CheckLocationButton() }}>
-                <VText white bold>{cultureStore.culture == 'tr' ? 'Tamam' : cultureStore.culture == 'en' ? 'OK' : cultureStore.culture == 'de' ? 'OK' : 'Tamam'}</VText>
-              </VButton>
+          </Modal>
+          <Modal
+            animationType="slide"
+            transparent={true}
+            visible={checkLocation}
+            onRequestClose={() => { }}>
+            <View style={styles.centeredView}>
+              <View style={styles.modalView}>
+                <Entypo name="location" size={60} color="black" />
+                <Text style={{ marginTop: 25, fontSize: 18, textTransform: 'uppercase' }}>{cultureResource.locationTitleModal}</Text>
+                <VText medium style={{ marginTop: 20, textAlign: 'center', fontSize: 14 }}>{cultureResource.errorMessageLocation}</VText>
+                <VButton secondary style={{ paddingHorizontal: 40, paddingVertical: 10, marginTop: 25 }}
+                  onPress={() => { CheckLocationButton() }}>
+                  <VText white bold>{cultureStore.culture == 'tr' ? 'Tamam' : cultureStore.culture == 'en' ? 'OK' : cultureStore.culture == 'de' ? 'OK' : 'Tamam'}</VText>
+                </VButton>
+              </View>
             </View>
-          </View>
-        </Modal>
-        {responseStore.res401 == true && (
-          <ModalComponent alertClose={alertClose} text={responseStore.resMessage} cultureResource={cultureResource} />
-        )}
-      </Portal>
-      <NavigationContainer>
-        <BottomSheet
-          enableDismissOnClose={true}
-          ref={bottomSheetModalRef}
-          index={-1}
-          snapPoints={snapPoints}
-          backdropComponent={renderBackdrop}
-          onChange={handleSheetChanges}
-          enableContentPanningGesture={false}
-        >
-          <BottomSheetScrollView style={{}}>
-            {/* <ScrollView> */}
-            <View style={{flex:1 , paddingBottom:70 }}>
-            {workOrderData != null && workOrderData.workOrderList.filter(workorder => {
-              return workorder.isAccepted === 0;
-            }).length > 0
-              && (
-                workOrderData.workOrderList.filter(workorder => {
+          </Modal>
+          {responseStore.res401 == true && (
+            <ModalComponent alertClose={alertClose} text={responseStore.resMessage} cultureResource={cultureResource} />
+          )}
+          <BottomSheetModal
+            enableDismissOnClose={true}
+            ref={bottomSheetModalRef}
+            snapPoints={snapPoints}
+            backdropComponent={renderBackdrop}
+            onChange={handleSheetChanges}
+            enableContentPanningGesture={false}
+          >
+            <BottomSheetScrollView style={{}}>
+              <View style={{ flex: 1, paddingBottom: 70 }}>
+                {workOrderData != null && workOrderData.workOrderList.filter(workorder => {
                   return workorder.isAccepted === 0;
-                }).map((item, key) => {
-                  return (
-                    <WorkOrderCard item={item} key={key} itemKey={key} cultureResource={cultureResource} />
+                }).length > 0
+                  && (
+                    workOrderData.workOrderList.filter(workorder => {
+                      return workorder.isAccepted === 0;
+                    }).map((item, key) => {
+                      return (
+                        <WorkOrderCard item={item} key={key} itemKey={key} cultureResource={cultureResource} />
+                      )
+                    }
+                    )
                   )
                 }
-                )
-              )
-            }
-            </View>
-
-            {/* </ScrollView> */}
-          </BottomSheetScrollView>
-
-        </BottomSheet>
-      </NavigationContainer>
-    </Provider>
+              </View>
+            </BottomSheetScrollView>
+          </BottomSheetModal>
+        </Provider>
+      </BottomSheetModalProvider>
+    </NavigationContainer>
   )
 }
 

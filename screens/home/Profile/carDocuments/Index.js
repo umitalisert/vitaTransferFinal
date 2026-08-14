@@ -54,7 +54,7 @@ const Index = ({ navigation, route }) => {
       <View style={{ flex: 1, backgroundColor: Color.white, paddingTop: Constants.statusBarHeight }}>
         <View style={{ flexDirection: 'row', paddingVertical: 15, alignItems: 'center', paddingHorizontal: 20 }}>
           <TouchableOpacity onPress={() => { navigation.goBack() }}>
-            <AntDesign name="arrowleft" size={18} color="black" />
+            <MaterialCommunityIcons name="arrow-left" size={18} color="black" />
           </TouchableOpacity>
           <VText semibold style={{ fontSize: 19, marginLeft: 20 }}>{cultureResource.carDocument}</VText>
         </View>

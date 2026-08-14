@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, Image, ScrollView, Linking, Platform, Modal, TextInput, Keyboard } from 'react-native'
+import { StyleSheet, Text, View, TouchableOpacity, Image, ScrollView, Linking, Platform, Modal, TextInput, Keyboard } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context';
 import React, { useEffect, useRef, useState, } from 'react'
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import FontAwesome5 from '@expo/vector-icons/FontAwesome5';
@@ -54,7 +55,7 @@ const Detail = ({ navigation, route }) => {
     const [hiddenSteps, setHiddenSteps] = useState([]);
     const bottomSheetModalRef = useRef();
     const bottomSheetModalPlaneRef = useRef();
-    const snapPoints = useMemo(() => ['50%']);
+    const snapPoints = useMemo(() => ['50%'], []);
     const snapPointsPlane = useMemo(() => ['65%'], []);
     const dispatch = useDispatch();
     const success = useRef(null);
@@ -64,7 +65,10 @@ const Detail = ({ navigation, route }) => {
     const [planetStatus, setPlanetStatus] = useState(0);
     const [latitude, setLatitude] = useState();
     const [longitude, setLongitude] = useState();
+    const [mapModalVisible, setMapModalVisible] = useState(false);
+    const [mapLabel, setMapLabel] = useState();
     const [flightData, setFlightData] = useState();
+    const [flightModalVisible, setFlightModalVisible] = useState(false);
     const [passengerDropModal, setPassengerDropModal] = useState(false);
     const scrollRef = useRef(null);
     const dataContainerRef = useRef(null);
@@ -95,6 +99,7 @@ const Detail = ({ navigation, route }) => {
             hideSub.remove();
         };
     }, []);
+
 
     useFocusEffect(
         useCallback(() => {
@@ -152,14 +157,18 @@ const Detail = ({ navigation, route }) => {
             }
         }))
     }
-    const handlePresentModalPress = useCallback(() => {
-        bottomSheetModalRef.current?.expand()
-    }, []);
-    const handleSheetChanges = useCallback((index) => {
-    }, []);
-    const handlePresentModaPlanePress = useCallback(() => {
-        bottomSheetModalPlaneRef.current?.expand();
-    }, []);
+    function openFlightModal(workOrderId, passengerId) {
+        GetWorkOrderPassengerFlightInfo.Post({ id: workOrderId, nodeId: passengerId }, cultureStore.culture).then((response) => {
+            if (response.data.responseCode == 200) {
+                setFlightData(response.data.data);
+                setFlightModalVisible(true);
+            } else if (response.data.ResponseCode == 401) {
+                responseStore.setRes401(true);
+                responseStore.setResMessage(response.data.ResponseMessage);
+                dispatch(setLoading(false));
+            }
+        });
+    }
     const handleSheetChangesPlane = useCallback((index) => {
     }, []);
     useEffect(() => {
@@ -420,10 +429,11 @@ const Detail = ({ navigation, route }) => {
             off(workOrderListChange, "value");
         };
     }, [navigation, isFocused]);
-    const openBottomSheet = (latitude, longitude) => {
-        setLatitude(latitude);
-        setLongitude(longitude)
-        handlePresentModalPress();
+    const openBottomSheet = (lat, lng, label) => {
+        setLatitude(lat);
+        setLongitude(lng);
+        setMapLabel(label);
+        setMapModalVisible(true);
     }
     // const openGps = (destination) => {
     //     var url =
@@ -464,7 +474,7 @@ const Detail = ({ navigation, route }) => {
             navigation.getParent()?.setOptions({
                 tabBarStyle: {
                     position: 'absolute',
-                    bottom: 20,
+                    bottom: Platform.OS === 'ios' ? 30 : 34,
                     height: 68,
                     backgroundColor: Color.darkGrey,
                     borderRadius: 1000,
@@ -482,12 +492,32 @@ const Detail = ({ navigation, route }) => {
         }
     }, [])
 
-    function ChangeWaitingStatusFunc(statusType, id) {
+    async function ChangeWaitingStatusFunc(statusType, id) {
         dispatch(setLoading(true));
+        let position = null;
+        try {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status !== 'granted') {
+                dispatch(setLoading(false));
+                dispatch(setHasError(true));
+                dispatch(setErrorMessage(cultureStore.culture == 'tr' ? 'Konum izni verilmedi. Lütfen ayarlardan konum iznini etkinleştirin.' : cultureStore.culture == 'en' ? 'Location permission was not granted. Please enable location permission in settings.' : cultureStore.culture == 'de' ? 'Standortberechtigung wurde nicht erteilt. Bitte aktivieren Sie die Standortberechtigung in den Einstellungen.' : 'Konum izni verilmedi. Lütfen ayarlardan konum iznini etkinleştirin.'));
+                return;
+            }
+            position = await Location.getLastKnownPositionAsync();
+            if (!position) {
+                position = await Location.getCurrentPositionAsync();
+            }
+        } catch (error) {
+            console.log('ChangeWaitingStatus location', error)
+        }
         let request = {
             statusType: statusType,
-            id: id
+            id: id,
+            latitude: position?.coords?.latitude ?? 0,
+            longitude: position?.coords?.longitude ?? 0
         }
+        console.log('ChangeWaitingStatus request URL:', ChangeWaitingStatus.rootUrl + 'ChangeWaitingStatus')
+        console.log('ChangeWaitingStatus payload:', JSON.stringify(request, null, 2))
         ChangeWaitingStatus.Post(request, cultureStore?.culture).then(response => {
             if (response.status == 200) {
                 if (response.data.responseCode == 200) {
@@ -525,38 +555,86 @@ const Detail = ({ navigation, route }) => {
         }).catch((error) => {
             console.log('ChangeWaitingStatus', error)
             // driverStore.setAvailable(!driverStore.available)
+            dispatch(setLoading(false));
         })
     }
 
-    const openMap = (latitude, longitude) => {
-        const label = 'Hedef Lokasyon';
+    const openGoogleMaps = (latitude, longitude) => {
         const latLng = `${latitude},${longitude}`;
-        const url =
-            Platform.OS === 'ios'
-                ? `http://maps.apple.com/?ll=${latLng}&q=${label}`
-                : `geo:${latLng}?q=${latLng}(${label})`;
-
-        Linking.openURL(url).catch(err => console.error('Harita açılamadı:', err));
+        const webUrl = `https://www.google.com/maps/search/?api=1&query=${latLng}`;
+        if (Platform.OS === 'ios') {
+            const appUrl = `comgooglemaps://?q=${latLng}&center=${latLng}&zoom=14`;
+            Linking.canOpenURL(appUrl)
+                .then((supported) => Linking.openURL(supported ? appUrl : webUrl))
+                .catch(err => console.error('Google Maps açılamadı:', err));
+        } else {
+            Linking.openURL(webUrl).catch(err => console.error('Google Maps açılamadı:', err));
+        }
     };
     const openYandexMap = (startLat, startLng, endLat, endLng) => {
-        const url = `https://yandex.com/maps/?rtext=${startLat},${startLng}~${endLat},${endLng}&rtt=auto`;
-
-        Linking.openURL(url)
+        const rtext = `${startLat},${startLng}~${endLat},${endLng}`;
+        const appUrl = `yandexmaps://maps.yandex.ru/?rtext=${rtext}&rtt=auto`;
+        const webUrl = `https://yandex.com/maps/?rtext=${rtext}&rtt=auto`;
+        Linking.canOpenURL(appUrl)
+            .then((supported) => Linking.openURL(supported ? appUrl : webUrl))
             .catch((err) => console.error('Yandex Harita açılamadı:', err));
     };
-    const openAppleMaps = (latitude, longitude) => {
+    const openAppleMaps = (latitude, longitude, label) => {
+        const latLng = `${latitude},${longitude}`;
+        // ll tek başına sadece haritayı ortalar, pin koymaz. Pinin görünmesi için
+        // q etiketi zorunlu; etiket yoksa koordinatı etiket olarak kullanıyoruz.
+        const pinLabel = encodeURIComponent(label?.trim() || latLng);
         if (Platform.OS === 'ios') {
-            const url = `http://maps.apple.com/?ll=${latitude},${longitude}`;
-            Linking.openURL(url).catch(err => {
-                console.error('Apple Maps açılamadı:', err);
+            const appUrl = `maps://?ll=${latLng}&q=${pinLabel}`;
+            const webUrl = `http://maps.apple.com/?ll=${latLng}&q=${pinLabel}`;
+            Linking.openURL(appUrl).catch(() => {
+                Linking.openURL(webUrl).catch(err => {
+                    console.error('Apple Maps açılamadı:', err);
+                });
             });
         } else {
             // Android'de Apple Maps yok, alternatif olarak Google Maps açabilirsin:
-            const url = `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+            const url = `https://www.google.com/maps/search/?api=1&query=${latLng}`;
             Linking.openURL(url).catch(err => {
                 console.error('Google Maps açılamadı:', err);
             });
         }
+    };
+
+    const getWhatsappPhoneNumber = (phoneNumber) => {
+        if (!phoneNumber) return null;
+        const cleanedPhone = `${phoneNumber}`.replace(/[^\d]/g, '');
+        return cleanedPhone.length > 0 ? cleanedPhone : null;
+    };
+
+    const openWhatsApp = async (phoneNumber) => {
+        const cleanedPhone = getWhatsappPhoneNumber(phoneNumber);
+        const appUrl = cleanedPhone
+            ? `whatsapp://send?phone=${cleanedPhone}`
+            : `whatsapp://`;
+        const webUrl = cleanedPhone
+            ? `https://wa.me/${cleanedPhone}`
+            : `https://web.whatsapp.com/`;
+        if (Platform.OS === 'ios') {
+            // iOS uygulama geçişi için onay diyaloğu gösterir ve kullanıcı "Vazgeç"e
+            // bastığında openURL reject olur. Bunu "WhatsApp yüklü değil" sanıp web'e
+            // düşersek vazgeçmesine rağmen tarayıcı açılır; o yüzden yüklü olup
+            // olmadığını önceden canOpenURL ile belirliyoruz.
+            const installed = await Linking.canOpenURL(appUrl).catch(() => false);
+            if (installed) {
+                Linking.openURL(appUrl).catch(() => {
+                    // Kullanıcı vazgeçti; başka bir yere yönlendirmiyoruz.
+                });
+                return;
+            }
+            Linking.openURL(webUrl).catch((err) => console.error('WhatsApp açılamadı:', err));
+            return;
+        }
+        // Android'de böyle bir onay diyaloğu yok; canOpenURL ise manifest <queries>
+        // girdisi gerektirdiğinden burada catch ile web'e düşmeye devam ediyoruz.
+        Linking.openURL(appUrl).catch(() =>
+            Linking.openURL(webUrl).catch((err) => console.error('WhatsApp açılamadı:', err))
+        );
     };
     function cancelBreakStatus() {
         let request = {
@@ -864,8 +942,31 @@ const Detail = ({ navigation, route }) => {
                                                     </View>
                                                     {step.address != null && (
                                                         <View key={'stepAddress' + stepKey} style={styles.stepAddress}>
-                                                            <MaterialCommunityIcons key={'stepAddressIcon' + stepKey} name={step.addressType == 0 ? 'triangle' : step.addressType == 1 ? 'circle' : 'square'} color={Color.black} size={14}></MaterialCommunityIcons>
-                                                            <View key={'stepAddressContainer' + stepKey} style={{ flex: 1, marginLeft: 20, justifyContent: 'center' }}>
+                                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                                                <MaterialCommunityIcons key={'stepAddressIcon' + stepKey} name={step.addressType == 0 ? 'triangle' : step.addressType == 1 ? 'circle' : 'square'} color={Color.black} size={14}></MaterialCommunityIcons>
+                                                                {(step.addressType == 0 || step.addressType == 2) && (
+                                                                    (() => {
+                                                                        const whatsappPassenger = step.items?.find((passenger) => getWhatsappPhoneNumber(passenger.phoneNumber));
+                                                                        const whatsappPhoneNumber = whatsappPassenger?.phoneNumber;
+                                                                        const whatsappEnabled = !!getWhatsappPhoneNumber(whatsappPhoneNumber);
+
+                                                                        return (
+                                                                    <TouchableOpacity
+                                                                            onPress={() => {
+                                                                                if (whatsappEnabled) {
+                                                                                    openWhatsApp(whatsappPhoneNumber);
+                                                                                }
+                                                                            }}
+                                                                            disabled={!whatsappEnabled}
+                                                                            style={{ backgroundColor: whatsappEnabled ? Color.green : Color.greyBorder, borderRadius: 100, width: 28, height: 28, alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}
+                                                                    >
+                                                                        <FontAwesome name='whatsapp' size={18} color={Color.white}></FontAwesome>
+                                                                    </TouchableOpacity>
+                                                                        );
+                                                                    })()
+                                                                )}
+                                                            </View>
+                                                            <View key={'stepAddressContainer' + stepKey} style={{ flex: 1, marginLeft: 12, justifyContent: 'center' }}>
                                                                 <VText key={'stepAddressTitle' + stepKey} bold greyText style={{ fontSize: 12, marginBottom: 8 }}>{step.addressType == 0 ? cultureResource.pickupLocation : step.addressType == 1 ? cultureResource.waypointLocation : cultureResource.dropLocation}</VText>
                                                                 <VText key={'stepAddressText' + stepKey} numberOfLines={5} semiBold style={{ fontSize: 14 }}>{step.address}</VText>
                                                             </View>
@@ -880,27 +981,29 @@ const Detail = ({ navigation, route }) => {
                                                                     <VText key={'stepItemsFullName' + passengerKey} bold style={{ fontSize: 14, flex: 1, marginLeft: 10 }}>{passenger.fullName}</VText>
                                                                     <View style={{ flexDirection: 'row' }}>
                                                                         {passenger.showFlightBtn && (
-                                                                            <TouchableOpacity onPress={() => { handlePresentModaPlanePress(), flight(item.id, passenger.id) }} style={{ backgroundColor: Color.primary, borderRadius: 100, width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 5 }}>
+                                                                            <TouchableOpacity onPress={() => { openFlightModal(item.id, passenger.id) }} style={{ backgroundColor: Color.primary, borderRadius: 100, width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 5 }}>
                                                                                 <FontAwesome name="plane" size={24} color="white" />
                                                                             </TouchableOpacity>
                                                                         )}
-                                                                        <TouchableOpacity onPress={() => { openBottomSheet(step.location.latitude, step.location.longitude) }} style={{ backgroundColor: Color.primary, borderRadius: 100, width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 5 }}>
+
+                                                                        <TouchableOpacity onPress={() => { openBottomSheet(step.location.latitude, step.location.longitude, step.addressType == 0 ? cultureResource.pickupLocation : step.addressType == 1 ? cultureResource.waypointLocation : cultureResource.dropLocation) }} style={{ backgroundColor: Color.primary, borderRadius: 100, width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 5 }}>
                                                                             <FontAwesome5 name='location-arrow' size={16} color={Color.white}></FontAwesome5>
                                                                         </TouchableOpacity>
+                                                                        <TouchableOpacity
+                                                                            onPress={() => { openWhatsApp(passenger.phoneNumber) }}
+                                                                            style={{ backgroundColor: Color.primary, borderRadius: 100, width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 5 }}
+                                                                        >
+                                                                            <FontAwesome name="whatsapp" size={24} color="white" />
+                                                                        </TouchableOpacity>
                                                                         {passenger.showCallBtn && (
-                                                                            <TouchableOpacity onPress={() => { Linking.openURL(`tel:+${passenger.phoneNumber}`) }} style={{ backgroundColor: Color.primary, borderRadius: 100, width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}>
+                                                                            <TouchableOpacity onPress={() => {
+                                                                                const rawPhone = `${passenger.phoneNumber}`.replace(/[^\d]/g, '');
+                                                                                if (rawPhone) Linking.openURL(`tel:+${rawPhone}`);
+                                                                            }} style={{ backgroundColor: Color.primary, borderRadius: 100, width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 5 }}>
                                                                                 <MaterialCommunityIcons name='phone' size={24} color={Color.white}></MaterialCommunityIcons>
                                                                             </TouchableOpacity>
                                                                         )}
 
-                                                                        {passenger.showCallBtn && (
-                                                                            <TouchableOpacity
-                                                                                onPress={() => { Linking.openURL(`whatsapp://send?phone=${passenger.phoneNumber}`) }}
-                                                                                style={{ backgroundColor: Color.primary, borderRadius: 100, width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginLeft: 5 }}
-                                                                            >
-                                                                                <MaterialCommunityIcons name='whatsapp' size={24} color={Color.white}></MaterialCommunityIcons>
-                                                                            </TouchableOpacity>
-                                                                        )}
 
                                                                     </View>
 
@@ -956,6 +1059,7 @@ const Detail = ({ navigation, route }) => {
                                                                     <MaterialCommunityIcons name='undo-variant' size={24} color={Color.white}></MaterialCommunityIcons>
                                                                     <VText bold white style={{ fontSize: 14, marginLeft: 5 }}>{cultureResource.undo}</VText>
                                                                 </VButton>
+
                                                             </View>
                                                         )
                                                     }
@@ -1235,55 +1339,29 @@ const Detail = ({ navigation, route }) => {
                     </Modal> */}
                     <StatusBar barStyle='dark-content'></StatusBar>
                 </View >
-                <BottomSheet
-                    enableDismissOnClose={true}
-                    ref={bottomSheetModalRef}
-                    index={-1}
-                    snapPoints={snapPoints}
-                    backdropComponent={renderBackdrop}
-                    onChange={handleSheetChanges}
+                <Modal
+                    animationType="slide"
+                    transparent={true}
+                    visible={mapModalVisible}
+                    onRequestClose={() => setMapModalVisible(false)}
                 >
-                    <View style={styles.contentContainer}>
-                        <TouchableOpacity style={{
-                            borderWidth: 1,
-                            borderColor: Color.purple,
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            padding: 16,
-                            marginVertical: 5,
-                            marginHorizontal: 15,
-                            borderRadius: 8,
-                            flexDirection: 'row'
-                        }}
-                            onPress={() => {
-                                // createMapLink({ provider: 'google', end: (latitude + ', ' + longitude) })
-                                openMap(latitude, longitude)
-                            }}
-                        >
-                            <MaterialCommunityIcons name="google-maps" size={32} color="black" />
-                            <VText bold darkGrey style={{ fontSize: 18 }}>Google Maps</VText>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={{
-                            borderWidth: 1,
-                            borderColor: Color.purple,
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            padding: 16,
-                            marginVertical: 5,
-                            marginHorizontal: 15,
-                            borderRadius: 8,
-                            flexDirection: 'row'
-                        }}
-                            onPress={() => {
-                                Location.getLastKnownPositionAsync().then((res) => {
-                                    openYandexMap(res.coords.latitude, res.coords.longitude, latitude, longitude)
-                                    // createMapLink({ provider: 'yandex', start: (res.coords.latitude + ', ' + res.coords.longitude), end: (latitude + ', ' + longitude) })
-                                })
-                            }}>
-                            <FontAwesome5 name="yandex-international" size={32} color="black" />
-                            <VText bold darkGrey style={{ fontSize: 18 }}>Yandex Maps</VText>
-                        </TouchableOpacity>
-                        {Platform.OS == 'ios' && (
+                    <TouchableOpacity
+                        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}
+                        activeOpacity={1}
+                        onPress={() => setMapModalVisible(false)}
+                    >
+                        <View style={{
+                            position: 'absolute',
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            backgroundColor: 'white',
+                            borderTopLeftRadius: 16,
+                            borderTopRightRadius: 16,
+                            paddingBottom: 40,
+                            paddingTop: 16,
+                        }}>
+                            <View style={{ width: 40, height: 4, backgroundColor: '#ccc', borderRadius: 2, alignSelf: 'center', marginBottom: 16 }} />
                             <TouchableOpacity style={{
                                 borderWidth: 1,
                                 borderColor: Color.purple,
@@ -1296,88 +1374,138 @@ const Detail = ({ navigation, route }) => {
                                 flexDirection: 'row'
                             }}
                                 onPress={() => {
-                                    // createMapLink({ provider: 'apple', end: (latitude + ', ' + longitude) })
-                                    openAppleMaps(latitude, longitude)
-                                }}>
-                                <MaterialCommunityIcons name="apple" size={32} color="black" />
-                                <VText bold darkGrey style={{ fontSize: 18 }}>Apple Maps</VText>
+                                    setMapModalVisible(false);
+                                    openGoogleMaps(latitude, longitude);
+                                }}
+                            >
+                                <MaterialCommunityIcons name="google-maps" size={32} color="black" />
+                                <VText bold darkGrey style={{ fontSize: 18 }}>Google Maps</VText>
                             </TouchableOpacity>
+                            <TouchableOpacity style={{
+                                borderWidth: 1,
+                                borderColor: Color.purple,
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                                padding: 16,
+                                marginVertical: 5,
+                                marginHorizontal: 15,
+                                borderRadius: 8,
+                                flexDirection: 'row'
+                            }}
+                                onPress={() => {
+                                    setMapModalVisible(false);
+                                    Location.getLastKnownPositionAsync().then((res) => {
+                                        openYandexMap(res.coords.latitude, res.coords.longitude, latitude, longitude);
+                                    });
+                                }}
+                            >
+                                <FontAwesome5 name="yandex-international" size={32} color="black" />
+                                <VText bold darkGrey style={{ fontSize: 18 }}>Yandex Maps</VText>
+                            </TouchableOpacity>
+                            {Platform.OS === 'ios' && (
+                                <TouchableOpacity style={{
+                                    borderWidth: 1,
+                                    borderColor: Color.purple,
+                                    justifyContent: 'center',
+                                    alignItems: 'center',
+                                    padding: 16,
+                                    marginVertical: 5,
+                                    marginHorizontal: 15,
+                                    borderRadius: 8,
+                                    flexDirection: 'row'
+                                }}
+                                    onPress={() => {
+                                        setMapModalVisible(false);
+                                        openAppleMaps(latitude, longitude, mapLabel);
+                                    }}
+                                >
+                                    <MaterialCommunityIcons name="apple" size={32} color="black" />
+                                    <VText bold darkGrey style={{ fontSize: 18 }}>Apple Maps</VText>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    </TouchableOpacity>
+                </Modal>
 
-                        )}
-
-                    </View>
-                </BottomSheet>
-
-                <BottomSheet
-                    enableOverDrag={true}
-                    enableHandlePanningGesture={true}
-                    enablePanDownToClose={false}
-                    ref={bottomSheetModalPlaneRef}
-                    index={-1}
-                    snapPoints={['50%', '70%']}
-                    backdropComponent={renderBackdrop}
-                    onChange={handleSheetChangesPlane}
+                <Modal
+                    animationType="slide"
+                    transparent={true}
+                    visible={flightModalVisible}
+                    onRequestClose={() => setFlightModalVisible(false)}
                 >
-                    <>
-                        {flightData != null && flightData != undefined && (
-                            <View style={{ borderRadius: 10, margin: 10 }}>
-                                <View style={{ padding: 10 }}>
-                                    <View style={{ backgroundColor: Color.white, borderRadius: 10, marginBottom: 10 }}>
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 30, backgroundColor: Color.greyLight, paddingHorizontal: 10, paddingVertical: 10, marginBottom: 10, borderRadius: 10 }}>
-                                            <View style={{ flexDirection: 'row', alignItems: 'center', }}>
-                                                <Image style={{ height: 50, width: 50, borderRadius: 30, backgroundColor: Color.black }} source={{ uri: flightData.passengerImage }} />
-                                                <VText bold style={{ fontSize: 16, textTransform: 'capitalize', marginLeft: 10 }}>{flightData.passengerName}</VText>
+                    <TouchableOpacity
+                        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}
+                        activeOpacity={1}
+                        onPress={() => setFlightModalVisible(false)}
+                    >
+                        <View style={{
+                            position: 'absolute',
+                            bottom: 0, left: 0, right: 0,
+                            backgroundColor: Color.greyLight,
+                            borderTopLeftRadius: 16,
+                            borderTopRightRadius: 16,
+                            maxHeight: '70%',
+                            paddingBottom: 40,
+                            paddingTop: 16,
+                        }}>
+                            <View style={{ width: 40, height: 4, backgroundColor: '#ccc', borderRadius: 2, alignSelf: 'center', marginBottom: 16 }} />
+                            {flightData != null && flightData != undefined && (
+                                <ScrollView style={{ borderRadius: 10, marginHorizontal: 10 }}>
+                                    <View style={{ padding: 10 }}>
+                                        <View style={{ backgroundColor: Color.white, borderRadius: 10, marginBottom: 10 }}>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 30, backgroundColor: Color.greyLight, paddingHorizontal: 10, paddingVertical: 10, borderRadius: 10 }}>
+                                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                                    <Image style={{ height: 50, width: 50, borderRadius: 30, backgroundColor: Color.black }} source={{ uri: flightData.passengerImage }} />
+                                                    <VText bold style={{ fontSize: 16, textTransform: 'capitalize', marginLeft: 10 }}>{flightData.passengerName}</VText>
+                                                </View>
+                                            </View>
+                                        </View>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, borderWidth: 1, borderColor: Color.greyBorder, padding: 10, borderRadius: 10, backgroundColor: Color.white }}>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                                {flightData.airlineCompanyIcon == null && (
+                                                    <FontAwesome5 name="plane-arrival" size={16} color={Color.greyBorder} />
+                                                )}
+                                                {flightData.airlineCompanyIcon != null && (
+                                                    <Image style={{ height: 20, width: 20, borderRadius: 15 }} source={{ uri: flightData.airlineCompanyIcon }} />
+                                                )}
+                                                <VText bold greyText style={{ fontSize: 15, textTransform: 'uppercase', marginLeft: 5 }}>{cultureResource.company}</VText>
+                                            </View>
+                                            <VText bold style={{ fontSize: 14 }}>{flightData.airlineCompany}</VText>
+                                        </View>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, borderWidth: 1, borderColor: Color.greyBorder, padding: 10, borderRadius: 10, backgroundColor: Color.white }}>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                                <Fontisto name="plane-ticket" size={16} color={Color.greyBorder} />
+                                                <VText bold greyText style={{ fontSize: 15, textTransform: 'uppercase', marginLeft: 5 }}>{cultureResource.flightCode}</VText>
+                                            </View>
+                                            <VText bold style={{ fontSize: 14 }}>{flightData.flightNumber}</VText>
+                                        </View>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, borderWidth: 1, borderColor: Color.greyBorder, padding: 10, borderRadius: 10, backgroundColor: Color.white }}>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                                <Ionicons name="timer-outline" size={16} color={Color.greyBorder} />
+                                                <VText bold greyText style={{ fontSize: 15, textTransform: 'uppercase', marginLeft: 5 }}>{cultureResource.situation}</VText>
+                                            </View>
+                                            {flightData.flightStatus == 0 && (
+                                                <VText bold style={{ fontSize: 14, textTransform: 'uppercase', color: 'green' }}>{cultureResource.timer}</VText>
+                                            )}
+                                            {flightData.flightStatus > 0 && (
+                                                <VText bold style={{ fontSize: 14, textTransform: 'uppercase', color: 'red' }}>{flightData.flightStatus} {cultureResource.delay}</VText>
+                                            )}
+                                        </View>
+                                        <View style={{ marginBottom: 30, borderWidth: 1, borderColor: Color.greyBorder, padding: 10, borderRadius: 10, backgroundColor: Color.white }}>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                                <Entypo name="info-with-circle" size={16} color={Color.greyBorder} />
+                                                <VText bold greyText style={{ fontSize: 15, textTransform: 'uppercase', marginLeft: 5 }}>{cultureResource.note}</VText>
+                                            </View>
+                                            <View style={{ borderWidth: 1, borderColor: Color.greyBorder, borderRadius: 10, padding: 10, marginTop: 10 }}>
+                                                <VText bold style={{ fontSize: 14 }}>{flightData.greeterNote}</VText>
                                             </View>
                                         </View>
                                     </View>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, borderWidth: 1, borderColor: Color.greyBorder, padding: 10, borderRadius: 10, backgroundColor: Color.white }}>
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', }}>
-                                            {flightData.airlineCompanyIcon == null && (
-                                                <FontAwesome5 name="plane-arrival" size={16} color={Color.greyBorder} />
-                                            )}
-                                            {flightData.airlineCompanyIcon != null && (
-                                                <Image style={{ height: 20, width: 20, borderRadius: 15 }} source={{ uri: flightData.airlineCompanyIcon }} />
-                                            )}
-                                            <VText bold greyText style={{ fontSize: 15, textTransform: 'uppercase', marginLeft: 5 }}>{cultureResource.company}</VText>
-                                        </View>
-                                        <VText bold style={{ fontSize: 14 }}>{flightData.airlineCompany}</VText>
-                                    </View>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, borderWidth: 1, borderColor: Color.greyBorder, padding: 10, borderRadius: 10, backgroundColor: Color.white }}>
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', }}>
-                                            <Fontisto name="plane-ticket" size={16} color={Color.greyBorder} />
-                                            <VText bold greyText style={{ fontSize: 15, textTransform: 'uppercase', marginLeft: 5 }}>{cultureResource.flightCode}</VText>
-                                        </View>
-                                        <VText bold style={{ fontSize: 14 }}>{flightData.flightNumber}</VText>
-                                    </View>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, borderWidth: 1, borderColor: Color.greyBorder, padding: 10, borderRadius: 10, backgroundColor: Color.white }}>
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', }}>
-                                            <Ionicons name="timer-outline" size={16} color={Color.greyBorder} />
-                                            <VText bold greyText style={{ fontSize: 15, textTransform: 'uppercase', marginLeft: 5 }}>{cultureResource.situation}</VText>
-                                        </View>
-                                        {flightData.flightStatus == 0 && (
-                                            <VText bold style={{ fontSize: 14, textTransform: 'uppercase', color: 'green' }}>{cultureResource.timer}</VText>
-                                        )}
-                                        {flightData.flightStatus > 0 && (
-                                            <VText bold style={{ fontSize: 14, textTransform: 'uppercase', color: 'red' }}>{flightData.flightStatus} {cultureResource.delay}</VText>
-                                        )}
-                                    </View>
-                                    <View style={{ marginBottom: 30, borderWidth: 1, borderColor: Color.greyBorder, padding: 10, borderRadius: 10, backgroundColor: Color.white }}>
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', }}>
-                                            <Entypo name="info-with-circle" size={16} color={Color.greyBorder} />
-                                            <VText bold greyText style={{ fontSize: 15, textTransform: 'uppercase', marginLeft: 5 }}>{cultureResource.note}</VText>
-                                        </View>
-                                        <ScrollView style={{ borderWidth: 1, borderColor: Color.greyBorder, borderRadius: 10, padding: 10, marginTop: 10 }}>
-                                            <VText bold style={{ fontSize: 14, }}>{flightData.greeterNote}</VText>
-
-                                        </ScrollView>
-
-                                    </View>
-                                </View>
-                            </View>
-                        )}
-
-                    </>
-                </BottomSheet>
+                                </ScrollView>
+                            )}
+                        </View>
+                    </TouchableOpacity>
+                </Modal>
             </>
         )
     }
