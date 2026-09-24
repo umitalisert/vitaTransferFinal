@@ -160,7 +160,7 @@ function AnimatedSplashScreen({ children }) {
           style={[
             StyleSheet.absoluteFill,
             {
-              backgroundColor: Constants.expoConfig.splash.backgroundColor,
+              backgroundColor: Constants.expoConfig?.splash?.backgroundColor || "#ffffff",
               opacity: animation,
             },
           ]}
@@ -169,7 +169,7 @@ function AnimatedSplashScreen({ children }) {
             style={{
               width: "100%",
               height: "100%",
-              resizeMode: Constants.expoConfig.splash.resizeMode || "contain",
+              resizeMode: Constants.expoConfig?.splash?.resizeMode || "contain",
               transform: [
                 {
                   scale: animation,
@@ -316,7 +316,7 @@ export default function App() {
       if (finalStatus !== 'granted') {
         return;
       }
-      token = (await Notifications.getExpoPushTokenAsync({ projectId: Constants.expoConfig.extra.eas.projectId })).data;
+      token = (await Notifications.getExpoPushTokenAsync({ projectId: Constants.expoConfig?.extra?.eas?.projectId || "8e08634e-2492-45b1-90b7-72c147944d89" })).data;
     } else {
     }
     return token;

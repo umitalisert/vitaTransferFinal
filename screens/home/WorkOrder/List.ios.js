@@ -1,4 +1,4 @@
-import { Animated, Image, Modal, Platform, ScrollView, StatusBar, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native'
+import { Animated, Image, Modal, Platform, RefreshControl, ScrollView, StatusBar, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context';
 import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useDispatch, useSelector } from 'react-redux';
@@ -7,7 +7,6 @@ import { setAvailable } from '../../../redux/slices/driverSlice';
 import { setErrorMessage, setHasError, setLoading } from '../../../redux/slices/mainSlice';
 import VText from '../../../components/VText';
 import CalendarStrip from 'react-native-calendar-strip';
-import Octicons from '@expo/vector-icons/Octicons';
 import WorkOrder from '../../../services/vita/WorkOrder';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import WorkOrderCard from '../../../components/WorkOrderCard';
@@ -82,6 +81,10 @@ const culture_en = {
   more: 'More',
   allTransfers: 'All transfers',
   waiting: 'Waiting for approval',
+  awaiting: 'Awaiting approval',
+  denied: 'Rejected',
+  emptyTitle: 'No transfers today',
+  emptyText: 'Pick another day from the calendar.',
   completedTransfers: 'Upcoming',
   approve: 'Accept',
   deny: 'Reject',
@@ -174,6 +177,10 @@ const culture_tr = {
   more: 'Daha fazla',
   allTransfers: 'Tüm transferler',
   waiting: 'Onay bekleyenler',
+  awaiting: 'Onay bekliyor',
+  denied: 'Reddedildi',
+  emptyTitle: 'Bu gün için transfer yok',
+  emptyText: 'Takvimden başka bir gün seçin.',
   completedTransfers: 'Yaklaşanlar',
   approve: 'Kabul Et',
   deny: 'Reddet',
@@ -266,6 +273,10 @@ const culture_de = {
   more: 'Mehr',
   allTransfers: 'Alle überweisungen',
   waiting: 'Warten auf die Bestätigung',
+  awaiting: 'Wartet auf Bestätigung',
+  denied: 'Abgelehnt',
+  emptyTitle: 'Keine Transfers heute',
+  emptyText: 'Wählen Sie einen anderen Tag im Kalender.',
   completedTransfers: 'Bevorstehende',
   approve: 'Annehmen',
   deny: 'Ablehnen',
@@ -343,6 +354,7 @@ const Index = ({ navigation }) => {
   const [breakTimeData, setBreakTimeData] = useState();
   const [dataFetch, setDataFetch] = useState(false);
   const [workOrderData, setWorkOrderData] = useState({ workOrderCalendar: [], workOrderList: [], workOrdersSummary: { completed: 0, total: 0, waitingApprovement: 0 } });
+  const [refreshing, setRefreshing] = useState(false);
   const [tabStatus, setTabStatus] = useState(1);
   const [timer, setTimer] = useState(true);
   const [breakTimeSuccess, setBreakTimeSuccess] = useState(false)
@@ -733,9 +745,13 @@ const Index = ({ navigation }) => {
     })
   }
 
-  function getWorkOrders1() {
-    setWorkOrderData({ workOrderCalendar: [], workOrderList: [], workOrdersSummary: { completed: 0, total: 0, waitingApprovement: 0 } });
-    dispatch(setLoading(true));
+  // sessiz=true -> asagi cekerek yenileme: global spinner acilmaz ve liste bosaltilmaz,
+  // geri bildirimi RefreshControl verir.
+  function getWorkOrders1(sessiz = false) {
+    if (!sessiz) {
+      setWorkOrderData({ workOrderCalendar: [], workOrderList: [], workOrdersSummary: { completed: 0, total: 0, waitingApprovement: 0 } });
+      dispatch(setLoading(true));
+    }
     WorkOrder.GetWorkOrders(selectedDate.format('YYYY-MM-DD'), cultureStore?.culture).then(response => {
       if (response.status == 200) {
         if (response.data.responseCode == 200) {
@@ -750,7 +766,17 @@ const Index = ({ navigation }) => {
           dispatch(setLoading(false));
         }
       }
+    }).catch(() => {
+      // Ag hatasi eskiden yakalanmiyordu; spinner sonsuza kadar acik kaliyordu.
+    }).finally(() => {
+      dispatch(setLoading(false));
+      setRefreshing(false);
     });
+  }
+
+  function onRefresh() {
+    setRefreshing(true);
+    getWorkOrders1(true);
   }
 
   useEffect(() => {
@@ -840,49 +866,75 @@ const Index = ({ navigation }) => {
     }, [])
   );
 
+  // Ust bar rengi surucu durumuna gore degisir (-2: molada/pasif -> acik tema).
+  const koyuBaslik = workOrderData.currentStatus != -2;
+
   return (
     <>
       <View style={[styles.container, (driverStore.available ? { backgroundColor: Color.headerGrey } : { backgroundColor: Color.dark })]}>
         <SafeAreaView style={[(workOrderData.currentStatus == -2 ? { backgroundColor: Color.headerGrey } : { backgroundColor: Color.dark })]}>
-          <View style={[styles.header, (workOrderData.currentStatus == -2 ? { backgroundColor: Color.headerGrey } : { backgroundColor: Color.dark })]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <VText bold style={[{ fontSize: 18 }, (workOrderData.currentStatus == -2 ? { color: Color.black } : { color: Color.white })]}>
-                {workOrderData?.currentStatusText}
-              </VText>
-              {workOrderData.breakEnd != null && workOrderData.breakEnd != undefined && (
-                <CountDownTimerMenu workOrderData={workOrderData.breakEnd} />
-              )}
-              {workOrderData?.currentStatus == -3 && (
-                <CounterUp time={workOrderData?.currentStatusDate} />
-              )}
+          <View style={[styles.header, koyuBaslik ? styles.headerKoyu : styles.headerAcik]}>
+              <View style={styles.headerSol}>
+                <VText bold numberOfLines={1} style={[styles.headerTarih, { color: koyuBaslik ? '#FFFFFF' : '#0B0F19' }]}>
+                  {selectedDate.format('D MMMM')}
+                </VText>
+                <View style={styles.headerDurumSatir}>
+                  {!!workOrderData?.currentStatusText && (
+                    <>
+                      <View style={[styles.durumNokta, { backgroundColor: workOrderData?.currentStatus == -3 ? '#E03024' : '#1CC961' }]} />
+                      <VText semiBold numberOfLines={1} style={[styles.headerDurum, { color: koyuBaslik ? 'rgba(255,255,255,0.72)' : '#404C5B' }]}>
+                        {workOrderData?.currentStatusText}
+                      </VText>
+                    </>
+                  )}
+                  {workOrderData.breakEnd != null && workOrderData.breakEnd != undefined && (
+                    <CountDownTimerMenu workOrderData={workOrderData.breakEnd} />
+                  )}
+                  {workOrderData?.currentStatus == -3 && (
+                    <CounterUp time={workOrderData?.currentStatusDate} />
+                  )}
+                </View>
+              </View>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                hitSlop={{ top: 8, left: 8, right: 8, bottom: 8 }}
+                style={[styles.ayarBtn, { backgroundColor: koyuBaslik ? 'rgba(255,255,255,0.12)' : 'rgba(11,15,25,0.06)' }]}
+                onPress={() => { toggleSwitch1() }}>
+                <Ionicons name="settings-outline" size={21} color={koyuBaslik ? '#FFFFFF' : '#0B0F19'} />
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity style={{ padding: 10, borderRadius: 50, borderWidth: 1, backgroundColor: Color.base, borderColor: Color.darkGrey, zIndex: 100, elevation: 100 }} onPress={() => { toggleSwitch1() }}>
-              <Ionicons name="settings-outline" size={24} color="black" />
-            </TouchableOpacity>
-          </View>
         </SafeAreaView>
-        <ScrollView style={styles.body} contentContainerStyle={{ paddingBottom: 100 }}>
+        <ScrollView
+          style={styles.body}
+          contentContainerStyle={{ paddingBottom: 100 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={'#7162EC'}
+              colors={['#7162EC']}
+              progressBackgroundColor={'#FFFFFF'}
+            />
+          }>
 
           <View style={styles.datePickerContainer}>
             <CalendarStrip
-              headerText={selectedDate.format('DD MMMM YYYY')}
               startingDate={startDate}
               selectedDate={selectedDate}
               scrollable
+              showMonth={false}
               markedDates={workOrderData.workOrderCalendar}
-              style={{ height: 180, paddingTop: 20 }}
-              minDayComponentSize={77}
-              dayComponentHeight={77}
-              calendarHeaderFormat='DD MMMM YYYY'
-              calendarColor={Color.white}
-              dateNameStyle={{ fontSize: 10, fontFamily: 'Nunito_700Bold', fontWeight: '700', lineHeight: 14, color: Color.greyText, }}
-              highlightDateNameStyle={{ fontSize: 10, fontFamily: 'Nunito_700Bold', fontWeight: '700', lineHeight: 14, color: Color.white, }}
-              calendarHeaderContainerStyle={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 20, }}
-              calendarHeaderStyle={{ alignSelf: 'flex-start', fontSize: 24, paddingLeft: 5, fontFamily: 'Nunito_700Bold', fontWeight: '700' }}
-              dateNumberStyle={{ fontSize: 30, fontFamily: 'Nunito_700Bold', fontWeight: '700' }}
-              highlightDateNumberStyle={{ fontSize: 30, fontFamily: 'Nunito_700Bold', fontWeight: '700', color: Color.white }}
-              dayContainerStyle={{ borderWidth: 1.5, borderRadius: 12, borderColor: Color.greyBorder, height: 77 }}
-              highlightDateContainerStyle={{ borderWidth: 1.5, borderRadius: 12, borderColor: Color.purple, height: 77, backgroundColor: Color.purple }}
+              style={{ height: 96 }}
+              innerStyle={{ paddingHorizontal: 0 }}
+              minDayComponentSize={58}
+              dayComponentHeight={72}
+              calendarColor={'transparent'}
+              dateNameStyle={{ fontSize: 11, fontFamily: 'Nunito_700Bold', fontWeight: '700', lineHeight: 15, letterSpacing: 0.4, color: '#9AA1AE' }}
+              highlightDateNameStyle={{ fontSize: 11, fontFamily: 'Nunito_700Bold', fontWeight: '700', lineHeight: 15, letterSpacing: 0.4, color: '#FFFFFF' }}
+              dateNumberStyle={{ fontSize: 19, fontFamily: 'Nunito_700Bold', fontWeight: '700', lineHeight: 26, color: '#0B0F19' }}
+              highlightDateNumberStyle={{ fontSize: 19, fontFamily: 'Nunito_700Bold', fontWeight: '700', lineHeight: 26, color: '#FFFFFF' }}
+              dayContainerStyle={{ borderWidth: 1, borderRadius: 14, borderColor: '#E7EAF0', backgroundColor: '#FFFFFF', height: 64, marginHorizontal: 3 }}
+              highlightDateContainerStyle={{ borderWidth: 1, borderRadius: 14, borderColor: '#7162EC', backgroundColor: '#7162EC', height: 64, marginHorizontal: 3 }}
               iconContainer={{ display: 'none' }}
               scrollToOnSetSelectedDate={false}
               onDateSelected={(date) => {
@@ -892,47 +944,60 @@ const Index = ({ navigation }) => {
             />
           </View>
           <View style={styles.workOrderSummaryContainer}>
-            <View style={styles.workOrderSummary}>
-              <View style={styles.total}>
-                <Octicons name='dot-fill' color={Color.black} size={18}></Octicons>
-                <VText bold style={{ fontSize: 10, lineHeight: 14, marginLeft: 5 }}>{workOrderData != null ? workOrderData.workOrdersSummary.total : 0} {cultureResource.transfer}</VText>
+            <View style={styles.ozetUst}>
+              <View style={styles.ozetSol}>
+                <VText bold style={styles.ozetSayi}>{workOrderData != null ? workOrderData.workOrdersSummary.total : 0}</VText>
+                <VText semiBold style={styles.ozetEtiket}>{cultureResource.transfer}</VText>
               </View>
-              <View style={styles.completed}>
-                <Octicons name='dot-fill' color={Color.green} size={18}></Octicons>
-                <VText bold style={{ fontSize: 10, lineHeight: 14, marginLeft: 5, color: Color.green }}>{workOrderData != null ? workOrderData.workOrdersSummary.completed : 0} {cultureResource.completed}</VText>
+              <View style={styles.ozetSag}>
+                <View style={styles.ozetNokta} />
+                <VText semiBold style={styles.ozetTamamlanan}>
+                  {workOrderData != null ? workOrderData.workOrdersSummary.completed : 0} {cultureResource.completed}
+                </VText>
               </View>
             </View>
-            <View style={[styles.workOrderProgressContainer]}>
-              {workOrderData != null && workOrderData.workOrdersSummary.total > 0 && (
-                <View style={[styles.workOrderProgress, ({ width: (workOrderData.workOrdersSummary.completed / workOrderData.workOrdersSummary.total * 100).toFixed(0) + '%' })]}></View>
-              )}
-              {workOrderData == null && (
-                <View style={[styles.workOrderProgress, { width: 0 }]}></View>
-              )}
+            <View style={styles.workOrderProgressContainer}>
+              <View style={[styles.workOrderProgress, {
+                width: (workOrderData != null && workOrderData.workOrdersSummary.total > 0
+                  ? (workOrderData.workOrdersSummary.completed / workOrderData.workOrdersSummary.total * 100).toFixed(0)
+                  : 0) + '%'
+              }]} />
             </View>
           </View>
           <View style={styles.tabContainer}>
-            <ScrollView horizontal={true} style={styles.tabScrollContainer} showsHorizontalScrollIndicator={false}>
-              <TouchableOpacity onPress={() => { setTabStatus(-1) }} style={[styles.tabButton, (tabStatus == -1 ? { borderColor: Color.darkGrey } : { borderColor: Color.greyBorder })]}>
-                <VText bold style={[{ fontSize: 14 }, (tabStatus == -1 ? { color: Color.darkGrey } : { color: Color.greyText })]}>{cultureResource.completedTransfers}</VText>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => { setTabStatus(0) }} style={[styles.tabButton, (tabStatus == 0 ? { borderColor: Color.darkGrey } : { borderColor: Color.greyBorder })]}>
-                <VText bold style={[{ fontSize: 14 }, (tabStatus == 0 ? { color: Color.darkGrey } : { color: Color.greyText })]}>{cultureResource.waiting}</VText>
-                {workOrderData != null && workOrderData.workOrderList.filter(workorder => {
-                  return workorder.isAccepted === 0;
-                }).length > 0 && (
-                    <View style={styles.badge}>
-                      <VText bold white style={{ fontSize: 10 }}>{workOrderData.workOrderList.filter(workorder => {
-                        return workorder.isAccepted === 0;
-                      }).length}</VText>
-                    </View>
-                  )}
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => { setTabStatus(1) }} style={[styles.tabButton, (tabStatus == 1 ? { borderColor: Color.darkGrey } : { borderColor: Color.greyBorder })]}>
-                <VText bold style={[{ fontSize: 14 }, (tabStatus == 1 ? { color: Color.darkGrey } : { color: Color.greyText })]}>{cultureResource.allTransfers}</VText>
-              </TouchableOpacity>
-
-            </ScrollView>
+            <View style={styles.tabRay}>
+              {[
+                { deger: -1, metin: cultureResource.completedTransfers },
+                { deger: 0, metin: cultureResource.waiting },
+                { deger: 1, metin: cultureResource.allTransfers },
+              ].map((sekme) => {
+                const aktif = tabStatus == sekme.deger;
+                const bekleyenSayi = sekme.deger == 0 && workOrderData != null
+                  ? workOrderData.workOrderList.filter(w => w.isAccepted === 0).length
+                  : 0;
+                return (
+                  <TouchableOpacity
+                    key={`tab-${sekme.deger}`}
+                    activeOpacity={0.8}
+                    onPress={() => { setTabStatus(sekme.deger) }}
+                    style={[styles.tabButton, aktif && styles.tabButtonAktif]}>
+                    <VText
+                      semiBold
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.85}
+                      style={[styles.tabMetin, aktif && styles.tabMetinAktif]}>
+                      {sekme.metin}
+                    </VText>
+                    {bekleyenSayi > 0 && (
+                      <View style={styles.badge}>
+                        <VText bold style={styles.badgeMetin}>{bekleyenSayi}</VText>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
           <View>
             {workOrderData != null && tabStatus === -1 && workOrderData.workOrderList
@@ -1067,17 +1132,50 @@ const Index = ({ navigation }) => {
 export default Index;
 
 const styles = StyleSheet.create({
+  // --- ust bar ---
+  headerKoyu: { backgroundColor: Color.dark },
+  headerAcik: { backgroundColor: Color.headerGrey },
+  headerSol: { flex: 1, minWidth: 0, paddingRight: 12 },
+  headerTarih: { fontSize: 22, lineHeight: 28, letterSpacing: -0.5 },
+  headerDurumSatir: { flexDirection: 'row', alignItems: 'center', marginTop: 3, minHeight: 18 },
+  durumNokta: { width: 7, height: 7, borderRadius: 3.5, marginRight: 7 },
+  headerDurum: { flexShrink: 1, fontSize: 13, lineHeight: 18, letterSpacing: -0.1 },
+  ayarBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  // --- takvim ---
+  datePickerContainer: { backgroundColor: '#FFFFFF', paddingHorizontal: 14, paddingTop: 12 },
+  // --- ozet ---
+  ozetUst: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
+  ozetSol: { flexDirection: 'row', alignItems: 'baseline', flexShrink: 1 },
+  ozetSayi: { fontSize: 20, lineHeight: 26, letterSpacing: -0.4, color: '#0B0F19' },
+  ozetEtiket: { fontSize: 13, lineHeight: 18, color: '#6B7280', marginLeft: 6, flexShrink: 1 },
+  ozetSag: { flexDirection: 'row', alignItems: 'center', flexShrink: 0, marginLeft: 12 },
+  ozetNokta: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#1CC961', marginRight: 7 },
+  ozetTamamlanan: { fontSize: 13, lineHeight: 18, color: '#1CC961' },
+  // --- sekmeler ---
+  tabRay: { flexDirection: 'row', backgroundColor: '#E7EAF0', borderRadius: 14, padding: 4 },
+  tabButtonAktif: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#0B0F19',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  tabMetin: { fontSize: 13.5, lineHeight: 18, letterSpacing: -0.2, color: '#6B7280', flexShrink: 1 },
+  tabMetinAktif: { color: '#0B0F19' },
+  badgeMetin: { fontSize: 11, lineHeight: 14, color: '#FFFFFF' },
   container: {
     flex: 1,
     height: '100%',
   },
-  body: { flex: 1, height: '100%', backgroundColor: Color.greyBorder },
+  body: { flex: 1, height: '100%', backgroundColor: '#F4F6FA' },
   header: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 10
+    paddingTop: 6,
+    paddingBottom: 14,
   },
   summaryPassengerTextContainer: { width: 60, alignItems: 'flex-end' },
   summaryPaymentTextContainer: { width: 60, alignItems: 'flex-end' },
@@ -1099,10 +1197,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 3,
   },
-  workOrderSummaryContainer: {
-    backgroundColor: Color.white,
-    paddingHorizontal: 15
-  },
+  workOrderSummaryContainer: { backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingTop: 4, paddingBottom: 18 },
   workOrderDetailSummaryContainer: {
     paddingTop: 20
   },
@@ -1192,43 +1287,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   workOrderProgressContainer: {
-    height: 8,
-    backgroundColor: Color.greyBorder,
+    height: 6,
+    backgroundColor: '#ECEEF2',
     borderRadius: 100,
-    marginBottom: 20,
     marginTop: 10,
+    overflow: 'hidden',
   },
-  workOrderProgress: {
-    backgroundColor: Color.green,
-    height: 8,
-    borderRadius: 100,
-  },
-  tabContainer: {
-    backgroundColor: Color.greyBorder,
-    paddingVertical: 15,
-    justifyContent: 'center'
-  },
+  workOrderProgress: { backgroundColor: '#1CC961', height: 6, borderRadius: 100 },
+  tabContainer: { backgroundColor: '#F4F6FA', paddingHorizontal: 16, paddingTop: 16, paddingBottom: 6 },
   tabButton: {
-    borderRadius: 1000,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    backgroundColor: Color.white,
-    borderWidth: 1,
-    borderColor: Color.greyBorder,
-    marginRight: 5,
-    marginLeft: 5,
-    justifyContent: 'center',
-    flexDirection: 'row'
-  },
-  badge: {
-    marginLeft: 10,
+    flex: 1,
+    height: 40,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    textAlign: 'center',
-    width: 20,
+  },
+  badge: {
+    marginLeft: 6,
+    minWidth: 20,
     height: 20,
-    backgroundColor: Color.purple,
-    borderRadius: 100
+    paddingHorizontal: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#7162EC',
+    borderRadius: 100,
   },
   workOrderContainer: {
     backgroundColor: Color.greyLight,

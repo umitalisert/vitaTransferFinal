@@ -1,643 +1,458 @@
-import React from 'react'
-import { Image, View, Text, TouchableOpacity, ScrollView, Animated, ImageBackground, StyleSheet, Modal } from 'react-native'
-import { SvgUri } from 'react-native-svg';
-import Color from '../../../../components/Color';
-import VText from '../../../../components/VText';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { FontAwesome } from '@expo/vector-icons';
-import { AntDesign } from '@expo/vector-icons';
-import { Entypo } from '@expo/vector-icons';
-import { Octicons } from '@expo/vector-icons';
-import { MaterialIcons } from '@expo/vector-icons';
-import MyCarsComponent from './../../../../components/ProfilMain/MyCarsComponent'
-import MyCarComponent from './../../../../components/ProfilMain/MyCarComponent'
-import MyDriversComponents from '../../../../components/ProfilMain/MyDriversComponents';
-import { Feather } from '@expo/vector-icons';
-import Evaluaitons from '../../../../components/ProfilMain/Evaluaitons';
-import { FontAwesome5 } from '@expo/vector-icons';
-import { Ionicons } from '@expo/vector-icons';
-import { getAuth, signOut, getIdToken } from 'firebase/auth'
-import { getApp } from 'firebase/app';
-import * as ImagePicker from "expo-image-picker";
-import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
-import * as TaskManager from 'expo-task-manager';
-import { useEffect } from 'react';
-import { useState, useRef, useMemo, useCallback } from 'react';
-import useCultureStore from '../../../../zustand/CultureStore';
-import AppLoading from '../../../splash/AppLoading';
-import Profile from '../../../../services/vita/Profile';
-import useProfileStore from '../../../../zustand/ProfileStore';
-import { Camera } from "expo-camera";
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+    ActivityIndicator, Alert, Image, Linking, Modal, Platform, Pressable,
+    RefreshControl, ScrollView, StyleSheet, TouchableOpacity, useWindowDimensions, View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useIsFocused } from '@react-navigation/native';
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import Constants from 'expo-constants';
-import {
-    BottomSheetModal,
-    BottomSheetModalProvider,
-    BottomSheetBackdrop
-} from '@gorhom/bottom-sheet';
-import UpdateProfile from '../../../../services/vita/UpdateProfile';
-import VButton from '../../../../components/VButton';
-import UploadProfileImage from '../../../../services/vita/UploadProfileImage';
+import * as ImagePicker from 'expo-image-picker';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import * as TaskManager from 'expo-task-manager';
+import Color from '../../../../components/Color';
+import VText from '../../../../components/VText';
+import MyCarComponent from '../../../../components/ProfilMain/MyCarComponent';
+import MyCarsComponent from '../../../../components/ProfilMain/MyCarsComponent';
+import Profile from '../../../../services/vita/Profile';
 import useAuthStore from '../../../../zustand/AuthStore';
-import useResponseStore from '../../../../zustand/ResponseStore'
-import { Asset } from 'expo-asset';
+import useCultureStore from '../../../../zustand/CultureStore';
+import useProfileStore from '../../../../zustand/ProfileStore';
+import useResponseStore from '../../../../zustand/ResponseStore';
+import profileCopy from './profileCopy';
+
+const languages = {
+    tr: { title: 'Türkçe', flag: require('../../../../assets/screens/account/appintro/tr.png') },
+    en: { title: 'English', flag: require('../../../../assets/screens/account/appintro/en.png') },
+    de: { title: 'Deutsch', flag: require('../../../../assets/screens/account/appintro/de.png') },
+};
+
+const MenuRow = ({ icon, title, subtitle, onPress, trailing, external, last }) => (
+    <TouchableOpacity accessibilityRole="button" activeOpacity={0.65} onPress={onPress} style={styles.menuRow}>
+        <View style={styles.menuIcon}><Feather name={icon} size={20} color={Color.primary} /></View>
+        <View style={[styles.menuBody, !last && styles.menuBorder]}>
+            <View style={styles.menuText}>
+                <VText bold style={styles.menuTitle}>{title}</VText>
+                {subtitle ? <VText style={styles.menuSubtitle}>{subtitle}</VText> : null}
+            </View>
+            {trailing}
+            <Feather name={external ? 'arrow-up-right' : 'chevron-right'} size={18} color="#8992A3" />
+        </View>
+    </TouchableOpacity>
+);
+
+const ProfileStat = ({ value, label, star, bordered }) => (
+    <View style={[styles.stat, bordered && styles.statBorder]}>
+        <View style={styles.statValueRow}>
+            {star && <MaterialCommunityIcons name="star" size={17} color="#F4C675" />}
+            <VText bold style={styles.statValue}>{value}</VText>
+        </View>
+        <VText style={styles.statLabel}>{label}</VText>
+    </View>
+);
 
 const Index = ({ navigation }) => {
-
-    const responseStore = useResponseStore((state) => state)
-    const [status, setStatus] = useState(0);
-    const [change, setChange] = useState(false);
-    const [userState, setUserState] = useState(false);
-    const [responseMessage, setResponseMessage] = useState();
+    const insets = useSafeAreaInsets();
+    const { height: windowHeight } = useWindowDimensions();
+    const isFocused = useIsFocused();
+    const culture = useCultureStore((state) => state.culture);
+    const profileChanged = useProfileStore((state) => state.change);
+    const token = useAuthStore((state) => state.loginUser?.token);
+    const logOut = useAuthStore((state) => state.logOut);
+    const setRes401 = useResponseStore((state) => state.setRes401);
+    const setResMessage = useResponseStore((state) => state.setResMessage);
+    const t = profileCopy[culture] || profileCopy.tr;
+    const language = languages[culture] || languages.tr;
+    const [user, setUser] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [loadError, setLoadError] = useState(false);
     const [photoModalVisible, setPhotoModalVisible] = useState(false);
-    const bottomSheetModalRef = useRef();
-    const snapPoints = useMemo(() => ['50%'], []);
-    const handleSheetChanges = useCallback((index) => {
+    const [logoutVisible, setLogoutVisible] = useState(false);
+    const [uploading, setUploading] = useState(false);
+    const [avatarFailed, setAvatarFailed] = useState(false);
+    const pendingPhotoSource = useRef(null);
+    const mounted = useRef(true);
+    const requestId = useRef(0);
+
+    useEffect(() => {
+        mounted.current = true;
+        return () => { mounted.current = false; };
     }, []);
-    const renderBackdrop = useCallback(
-        props => (
-            <BottomSheetBackdrop
-                {...props}
-                opacity={0.6}
-                disappearsOnIndex={-1}
-                appearsOnIndex={0}
-            />
-        ),
-        []
-    );
-    const [vehicles, setVehicles] = useState();
-    const [companies, setCompanies] = useState();
-    const cultureStore = useCultureStore((state) => state);
-    const profileStore = useProfileStore((state) => state);
-    const [pickVehicle, setPickVehicle] = useState();
-    const [dataFetch, setDataFetch] = useState(false);
-    const [uid, setUid] = useState("");
-    const authStore = useAuthStore((state) => state);
-    const culture_en = {
-        hello: 'Hello',
-        help: 'Help',
-        settings: 'Settings',
-        logout: 'Sign Out',
-        completed: 'Completed',
-        late: 'Late',
-        canceled: 'Canceled',
-        vehicles: 'Vehicles',
-        companies: 'Companies',
-        ok: 'Ok',
-        driver: 'Driver',
-        usedVehicle: 'Used Vehicle',
-        change: 'Change',
-        myTools: 'My Tools',
-        myCars: 'My Cars',
-        driverInformation: 'Driver Information',
-        myPersonalInformations: ' My personal informations',
-        myDocuments: 'My documents',
-        institutionsIServe: 'Institutions I Serve',
-        changeProfilePhoto: 'Change Profile Photo',
-        takeAPhoto: 'Take a photo',
-        chooseFromLibrary: 'Choose From Library',
-        failed: 'Failed!',
-        successful: 'Successful',
-        useCar: 'used vehicle',
-        document: 'Documents',
-        logOutText: 'Are you sure you want to log out?'
 
-    }
-    const culture_tr = {
-        hello: 'Merhaba',
-        help: 'Destek',
-        settings: 'Ayarlar',
-        logout: 'Çıkış yap',
-        completed: 'Tamamlandı',
-        late: 'Gecikti',
-        canceled: 'İptal',
-        vehicles: 'Araçlar',
-        companies: 'Şirketler',
-        ok: 'Tamam',
-        driver: 'Sürücü',
-        usedVehicle: 'Kullanılan araç',
-        change: 'Değiştir',
-        myCars: 'Araçlarım',
-        driverInformation: 'Sürücü Bilgileri',
-        myPersonalInformations: 'Kişisel Bilgilerim',
-        myDocuments: 'Belgelerim',
-        institutionsIServe: 'Hizmet Verdiğim Kurumlar',
-        changeProfilePhoto: 'Profil Fotoğrafını Değiştir',
-        takeAPhoto: 'Fotoğraf Çek',
-        chooseFromLibrary: 'Kütüphaneden Seç',
-        failed: 'Başarısız!',
-        successful: 'Başarılı',
-        useCar: 'kullanılan araç',
-        document: 'Belgeler',
-        warning: 'Uyarı !',
-        logOutText: 'Çıkış yapmak istediğinize emin misiniz?',
+    const getProfile = useCallback(async () => {
+        const currentRequest = ++requestId.current;
+        try {
+            const response = await Profile.Get(culture);
+            if (!mounted.current || currentRequest !== requestId.current) return;
+            const body = response?.data;
+            const code = body?.responseCode ?? body?.ResponseCode;
+            if (response?.status === 200 && code === 200 && body?.data) {
+                setUser(body.data);
+                setLoadError(false);
+            } else if (code === 401) {
+                setResMessage(body.responseMessage ?? body.ResponseMessage);
+                setRes401(true);
+                setLoadError(true);
+            } else {
+                setLoadError(true);
+            }
+        } catch (error) {
+            if (!mounted.current || currentRequest !== requestId.current) return;
+            if (error.response?.status === 401) {
+                setResMessage(error.response.data?.responseMessage ?? error.response.data?.ResponseMessage);
+                setRes401(true);
+            }
+            setLoadError(true);
+        } finally {
+            if (mounted.current && currentRequest === requestId.current) {
+                setLoading(false);
+                setRefreshing(false);
+            }
+        }
+    }, [culture, setRes401, setResMessage]);
 
-    }
-    const culture_de = {
-        hello: 'Hallo',
-        help: 'Hilfe',
-        settings: 'Einstellungen',
-        logout: 'Ausloggen',
-        completed: 'Abgeschlossen',
-        late: 'Spät',
-        canceled: 'Abgesagt',
-        vehicles: 'Fahrzeuge',
-        companies: 'Firmen',
-        ok: 'OK',
-        driver: 'Fahrer',
-        usedVehicle: 'Gebrauchtfahrzeug',
-        change: 'ändern',
-        myCars: 'meine Autos',
-        driverInformation: 'Fahrerinformationen',
-        myPersonalInformations: 'Meine persönlichen Informationen',
-        myDocuments: 'meine Dokumente',
-        institutionsIServe: 'Bediente Institutionen',
-        changeProfilePhoto: 'Profilbild ändern',
-        takeAPhoto: 'Foto machen',
-        chooseFromLibrary: 'aus der Bibliothek auswählen',
-        failed: 'Fehlgeschlagen!',
-        successful: 'Erfolgreich',
-        useCar: 'verwendetes Fahrzeug',
-        document: 'Dokumente',
-        logOutText: 'Möchten Sie sich wirklich abmelden?',
-        warning: 'Warnung',
-    }
-    const cultureResource = (cultureStore.culture == 'tr' ? culture_tr : cultureStore.culture == 'en' ? culture_en : cultureStore.culture == 'de' ? culture_de : culture_tr);
-    let flag = require('./../../../../assets/screens/account/appintro/tr.png');
-    if (cultureStore.culture == "en") {
-        flag = require('./../../../../assets/screens/account/appintro/en.png')
-    }
-    else if (cultureStore.culture == "tr") {
-        flag = require('./../../../../assets/screens/account/appintro/tr.png')
-    }
-    else if (cultureStore.culture == "de") {
-        flag = require('./../../../../assets/screens/account/appintro/de.png')
-    }
-    else {
-        flag = require('./../../../../assets/screens/account/appintro/tr.png')
-    }
-    const [user, setUser] = useState();
+    useEffect(() => { getProfile(); }, [getProfile, profileChanged]);
+    useEffect(() => { setAvatarFailed(false); }, [user?.imagePath]);
 
-    function getProfile() {
-        Profile.Get().then((response) => {
-            if (response && response.status == 200) {
-                if (response.data.responseCode == 200) {
-                    setUser(response.data.data);
-                    setVehicles(response.data.data.vehicles)
-                    setCompanies(response.data.data.companies)
-                } else if (response.data.ResponseCode == 401) {
-                    responseStore.setRes401(true)
-                    responseStore.setResMessage(response.data.ResponseMessage)
+    const refresh = () => {
+        setRefreshing(true);
+        getProfile();
+    };
+
+    const openSupport = async () => {
+        try {
+            await Linking.openURL('https://vitarnd.com');
+        } catch {
+            Alert.alert(t.supportHelp, t.supportError);
+        }
+    };
+
+    const updatePhoto = async (source) => {
+        try {
+            if (source === 'camera') {
+                const permission = await ImagePicker.requestCameraPermissionsAsync();
+                if (!permission.granted) {
+                    Alert.alert(t.changeProfilePhoto, t.cameraPermission);
+                    return;
                 }
             }
-        }).catch((err) => {
-            console.log("getProfile Error: ", err);
-        })
-    }
-    useEffect(() => {
-        getProfile();
-        return () => {
-        }
-    }, [profileStore.change])
-    useEffect(() => {
-        getProfile();
-    }, [])
-
-    useEffect(() => {
-
-        if (user != undefined && user != null) {
-            let arr = user.vehicles.filter((item) => {
-                return item.isCurrent == true
-            })
-            setPickVehicle(arr[0])
-        }
-    }, [user])
-
-
-    // Eski profil sorgulama kodu 2024 10. ay gibi kaldırıldı.
-
-    const takePhoto = async () => {
-        bottomSheetModalRef.current?.close()
-        const permission = await Camera.getCameraPermissionsAsync();
-        if (!permission.granted) {
-            await Camera.requestCameraPermissionsAsync();
-        } else {
-            let result = await ImagePicker.launchCameraAsync({
-                quality: 1,
-                allowsEditing: true,
-                aspect: [1, 1],
-            });
-            if (result.assets !== undefined && result.assets !== null) {
-                imageCallback(result);
-            }
-        }
-    };
-
-    const pickImage = async () => {
-        setPhotoModalVisible(false);
-        let result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 1,
-        });
-        if (!result.canceled && result.assets && result.assets.length > 0 && result.assets[0].uri) {
-            imageCallback(result);
-        }
-    };
-
-    const imageCallback = async (result) => {
-        try {
-
+            const options = { mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 1 };
+            const result = source === 'camera'
+                ? await ImagePicker.launchCameraAsync(options)
+                : await ImagePicker.launchImageLibraryAsync(options);
+            if (result.canceled || !result.assets?.[0]?.uri) return;
+            setUploading(true);
             const context = ImageManipulator.manipulate(result.assets[0].uri);
             context.resize({ width: 400, height: 400 });
             const renderedImage = await context.renderAsync();
-            const manipResult = await renderedImage.saveAsync({
-                compress: 1,
-                format: SaveFormat.JPEG,
+            const photo = await renderedImage.saveAsync({ compress: 1, format: SaveFormat.JPEG });
+            const formData = new FormData();
+            formData.append('Photo', { uri: photo.uri, name: photo.uri.split('/').pop(), type: 'image/jpeg' });
+            formData.append('uid', '');
+            const response = await fetch('https://vitadrivetransferapi-test.vitarnd.com/UploadProfileImage_Async', {
+                method: 'PUT', body: formData,
+                headers: { Authorization: `Bearer ${token}`, 'Accept-Language': culture },
             });
-            let localUri = manipResult.uri;
-            let filename = localUri.split("/").pop();
-            let match = /\.(\w+)$/.exec(filename);
-            let type = match ? `image/${match[1]}` : `image`;
-            let formData = new FormData();
-
-
-            formData.append("Photo", { uri: localUri, name: filename, type });
-            formData.append("uid", uid);
-            const token = authStore.loginUser.token;
-            let ctr = cultureStore.culture
-            await fetch(
-                "https://vitadrivetransferapi-test.vitarnd.com/UploadProfileImage_Async",
-                {
-                    method: "PUT",
-                    body: formData,
-                    headers: { Authorization: `Bearer ${token}`, "Accept-Language": ctr }
-                }
-            )
-                .then((res) => {
-                    setUser((prevState) => ({
-                        ...prevState,
-                        imagePath: manipResult.uri,
-
-                    }));
-                })
-                .catch((error) => { console.log("Profile image upload error:", error); })
-                .finally(() => {  });
-
-        } catch (error) {
+            if (!response.ok) throw new Error('Profile photo upload failed');
+            if (mounted.current) setUser((previous) => ({ ...previous, imagePath: photo.uri }));
+        } catch {
+            if (mounted.current) Alert.alert(t.failed, t.photoError);
+        } finally {
+            if (mounted.current) setUploading(false);
         }
-
     };
 
-    function userLogOut() {
-        setUserState(false)
-        authStore.logOut();
-        try {
-            TaskManager.unregisterAllTasksAsync();
-        } catch (error) {
-
+    // Wait for the iOS sheet to close before presenting the system image picker.
+    const selectPhotoSource = (source) => {
+        pendingPhotoSource.current = source;
+        setPhotoModalVisible(false);
+        if (Platform.OS !== 'ios') {
+            pendingPhotoSource.current = null;
+            updatePhoto(source);
         }
-    }
+    };
+    const onPhotoSheetDismiss = () => {
+        const source = pendingPhotoSource.current;
+        pendingPhotoSource.current = null;
+        if (source) updatePhoto(source);
+    };
+    const userLogOut = () => {
+        setLogoutVisible(false);
+        TaskManager.unregisterAllTasksAsync().catch(() => {});
+        logOut();
+    };
+
+    const vehicles = Array.isArray(user?.vehicles) ? user.vehicles.filter(Boolean) : [];
+    const companies = Array.isArray(user?.companies) ? user.companies.filter(Boolean) : [];
+    const selectedVehicle = vehicles.find((vehicle) => vehicle.isCurrent === true) || vehicles[0];
+    const otherVehicles = vehicles.filter((vehicle) => vehicle !== selectedVehicle);
+    const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(' ') || t.driver;
+    const initials = [user?.firstName?.[0], user?.lastName?.[0]].filter(Boolean).join('').toUpperCase() || 'V';
+    const rating = user?.rating === null || user?.rating === undefined || user?.rating === '' ? '—' : user.rating;
+    const editProfile = () => navigation.navigate('PersonalInformation', { data: { user } });
+    // The tab bar floats 30–34 points above the bottom of the screen.
+    const bottomPadding = Math.max(insets.bottom + 100, 134);
 
     return (
-        <>
-            {user == null && (
-                <AppLoading></AppLoading>
-            )}
-            {
-                user != null && (
-                    <>
-                        <ScrollView style={{ paddingTop: Constants.statusBarHeight }} >
-                            <View style={{ flex: 1 }}>
-                                <View style={{ margin: 20, }}>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', }}>
-                                        <TouchableOpacity onPress={() => { setPhotoModalVisible(true) }}>
-                                            <ImageBackground imageStyle={{ borderRadius: 40, backgroundColor: Color.greyLight }} style={{ height: 80, width: 80, borderRadius: 40 }} source={{ uri: user.imagePath }} >
-                                                <View style={{ backgroundColor: Color.white, height: 26, width: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', marginTop: 54, marginLeft: 54 }}>
-                                                    <MaterialCommunityIcons name="plus-circle" size={26} color={Color.green} style={{}} />
-                                                </View>
-                                            </ImageBackground>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity style={{ backgroundColor: Color.greyLight, alignItems: 'center', justifyContent: 'center', borderRadius: 10, height: 72, marginLeft: 10 }}
-                                            onPress={() => {
-                                                setUserState(true)
-                                                // const auth = getAuth();
-                                                // signOut(auth).then(() => {
-                                                //     TaskManager.unregisterAllTasksAsync();
-                                                // }).catch((error) => { });
-
-                                            }}>
-                                            <MaterialCommunityIcons name='logout' size={32} color={Color.dark}></MaterialCommunityIcons>
-                                        </TouchableOpacity>
-                                    </View>
-                                    <View style={{ marginTop: 10, }}>
-                                        <VText bold style={{ fontSize: 22, }}>{user.firstName} {user.lastName}</VText>
-                                        <View style={{ marginTop: 8, flexDirection: 'row', marginRight: 15 }}>
-                                            {/* <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 15 }}>
-                            <MaterialCommunityIcons name="steering" size={15} color="black" />
-                            <VText darkGrey semibold style={{ fontSize: 14, marginLeft: 3 }}>Araç Sahibi</VText>
-                        </View> */}
-                                            <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 15 }}>
-                                                <MaterialCommunityIcons name="steering" size={15} color="black" />
-                                                <VText darkGrey semibold style={{ fontSize: 14, marginLeft: 3 }}>{cultureResource.driver}</VText>
-                                            </View>
-                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                                <AntDesign name="star" size={15} color="orange" />
-                                                <VText darkGrey semibold style={{ fontSize: 14, marginLeft: 3 }}>{user.rating}</VText>
-                                            </View>
-                                        </View>
-                                    </View>
-                                    <View style={{ marginVertical: 15, borderWidth: 1, borderColor: Color.greyBorder, }}></View>
-                                    {pickVehicle != null && pickVehicle != undefined && (
-                                        <View style={{ borderWidth: 1, borderColor: Color.purple, borderRadius: 10, paddingTop: 10, paddingHorizontal: 15, paddingBottom: 15, }}>
-                                            <View style={{ flexDirection: 'row', alignItems: 'center', paddingBottom: 10, borderBottomWidth: 1, borderColor: Color.greyBorder, marginBottom: 15 }}>
-                                                <Octicons name="dot-fill" size={12} color="lightgreen" />
-                                                <VText darkGrey bold style={{ fontSize: 13, textTransform: 'uppercase', marginLeft: 5 }}>{cultureResource.useCar}</VText>
-                                            </View>
-                                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                <View style={{ flexDirection: 'row', flex: 1, paddingRight: 10, alignItems: 'center' }}>
-                                                    <Image style={{ height: 48, width: 48, }} source={{ uri: pickVehicle.brandLogo }} />
-                                                    <View style={{ marginLeft: 10, flex: 1 }}>
-                                                        <VText bold numberOfLines={1} style={{ fontSize: 19, textTransform: 'uppercase', marginBottom: 2 }}>{pickVehicle.plate}</VText>
-                                                        <VText semibold greyText numberOfLines={1} style={{ fontSize: 13, textTransform: 'capitalize', marginBottom: 2 }}>{pickVehicle.brand}</VText>
-                                                    </View>
-                                                </View>
-                                                <TouchableOpacity onPress={() => { navigation.navigate('CarChange', { data: { vehicles: user.vehicles } }) }} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: Color.purple, paddingVertical: 10, paddingHorizontal: 15, borderRadius: 30, flexShrink: 0 }}>
-                                                    <MaterialIcons name="loop" size={18} color="white" />
-                                                    <VText bold style={{ marginLeft: 5, color: Color.white, fontSize: 14, textTransform: 'capitalize' }}>{cultureResource.change}</VText>
-                                                </TouchableOpacity>
-                                            </View>
-                                        </View>
-                                    )}
-                                </View>
-                                <View style={{ backgroundColor: Color.headerGrey, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: Color.greyBorder, }}>
-                                    <View style={{ padding: 20, }}>
-                                        <VText bold style={{ fontSize: 19, textTransform: 'capitalize' }}>{cultureResource.myCars}</VText>
-                                    </View>
-                                    {user != null && (
-                                        user.vehicles.length == 1 && (
-                                            <MyCarComponent cultureResource={cultureResource} navigation={navigation} item={user.vehicles[0]} />
-                                        )
-                                    )}
-                                    <ScrollView showsVerticalScrollIndicator={false} showsHorizontalScrollIndicator={false} horizontal={true} style={{ paddingLeft: 20, }}>
-
-                                        {user != null && (
-                                            user.vehicles.length > 1 && (
-                                                user.vehicles.map((item, key) => {
-                                                    return (
-                                                        <MyCarsComponent navigation={navigation} key={key} item={item} keyItem={key} cultureResource={cultureResource} />
-                                                    )
-                                                })
-                                            )
-                                        )}
-
-                                        <View style={{ paddingRight: 30 }}></View>
-                                        {/* <View style={{ backgroundColor: Color.white, borderRadius: 10, borderWidth: 1, borderColor: Color.greyBorder, paddingVertical: 16, paddingHorizontal: 15 }}>
-                        <View style={{ flexDirection: 'row', marginBottom: 15 }}>
-                            <Image style={{ height: 48, width: 48, }} source={{ uri: 'https://reactnative.dev/img/tiny_logo.png' }} />
-                            <View style={{ marginLeft: 10 }}>
-                                <VText bold style={{ fontSize: 19, textTransform: 'uppercase', marginBottom: 2 }}>34 ABC 12</VText>
-                                <VText semibold greyText style={{ fontSize: 13, textTransform: 'capitalize', marginBottom: 2 }}>Mercedes Sprinter</VText>
-                            </View>
-                        </View>
-                        <View style={{ flexDirection: 'row', marginRight: 13 }}>
-                            <View style={{ flexDirection: 'row', backgroundColor: Color.greyLight, borderRadius: 10, paddingVertical: 4, paddingHorizontal: 8, marginRight: 5 }}>
-                                <MaterialIcons name="date-range" size={15} color="black" />
-                                <VText semibold style={{ fontSize: 12, color: Color.darkGrey, marginLeft: 4 }}>2011</VText>
-                            </View>
-                            <View style={{ flexDirection: 'row', backgroundColor: Color.greyLight, marginRight: 5, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 10 }}>
-                                <Ionicons name="person" size={15} color="black" />
-                                <VText semibold style={{ fontSize: 12, color: Color.darkGrey, marginLeft: 4 }}>5 + 1</VText>
-                            </View>
-                            <View style={{ flexDirection: 'row', backgroundColor: Color.greyLight, marginRight: 5, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 10 }}>
-                                <MaterialCommunityIcons name="fuel" size={15} color="black" />
-                                <VText semibold style={{ fontSize: 12, color: Color.darkGrey, textTransform: 'capitalize', marginLeft: 4 }}>Dizel</VText>
-                            </View>
-                        </View>
-                        <View style={{ borderBottomWidth: 1, borderBottomColor: Color.greyBorder, marginVertical: 15 }}></View>
-                        <TouchableOpacity style={{ borderRadius: 30, flexDirection: 'row', borderWidth: 1, borderColor: Color.purple, paddingVertical: 15, justifyContent: 'center' }}>
-                            <MaterialCommunityIcons name="file-document-multiple" size={18} color={Color.purple} />
-                            <VText bold style={{ color: Color.purple, fontSize: 13, textTransform: 'capitalize', marginLeft: 5 }}>Belgeler</VText>
-                        </TouchableOpacity>
-                    </View> */}
-                                    </ScrollView>
-                                </View>
-                                {/* <View style={{ backgroundColor: Color.headerGrey, paddingBottom: 20, borderBottomWidth: 1, borderBottomColor: Color.greyBorder }}>
-                <View style={{ padding: 20, }}>
-                    <VText bold style={{ fontSize: 19, textTransform: 'capitalize' }}>Sürücülerim</VText>
+        <View style={[styles.screen, { paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right }]}>
+            {isFocused && <StatusBar style="dark" />}
+            <View style={styles.topBar}>
+                <View style={styles.heading}>
+                    <VText bold style={styles.eyebrow}>{t.account}</VText>
+                    <VText bold style={styles.screenTitle}>{t.myProfile}</VText>
                 </View>
-                <View style={{ paddingHorizontal: 20 }}>
-                    <MyDriversComponents navigation={navigation} />
-                    <View style={{ backgroundColor: Color.white, borderRadius: 10, borderWidth: 1, borderColor: Color.greyBorder, paddingVertical: 16, paddingHorizontal: 15 }}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                            <View style={{ flexDirection: 'row' }}>
-                                <Image style={{ height: 48, width: 48, borderRadius: 24 }} source={{ uri: 'https://reactnative.dev/img/tiny_logo.png' }} />
-                                <View style={{ marginLeft: 10 }}>
-                                    <VText bold style={{ fontSize: 18, textTransform: 'uppercase', marginBottom: 2 }}>Tarkan Yıldırım</VText>
-                                    <VText semibold greyText style={{ fontSize: 13, textTransform: 'capitalize', marginBottom: 2 }}>+90 530 962 66 82</VText>
-                                </View>
-                            </View>
-                            <TouchableOpacity style={{ alignItems: 'center', backgroundColor: Color.purple, height: 40, width: 40, borderRadius: 20, justifyContent: 'center', backgroundColor: Color.purple }}>
-                                <View styyle={{}}>
-                                    <FontAwesome5 name="phone-alt" size={18} color="white" />
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={t.supportHelp} onPress={openSupport} style={styles.helpButton}>
+                    <Feather name="help-circle" size={23} color="#34354D" />
+                </TouchableOpacity>
+            </View>
+
+            {!user ? (
+                <View style={[styles.initialState, { paddingBottom: bottomPadding }]}>
+                    {loading ? <ActivityIndicator size="large" color={Color.primary} /> : (
+                        <>
+                            <View style={styles.emptyIcon}><Feather name="wifi-off" size={26} color={Color.primary} /></View>
+                            <VText bold style={styles.emptyTitle}>{t.loadError}</VText>
+                            <VText style={styles.emptySubtitle}>{t.connectionHint}</VText>
+                            <TouchableOpacity accessibilityRole="button" style={styles.primaryButton} onPress={() => { setLoading(true); getProfile(); }}>
+                                <VText bold style={styles.primaryButtonText}>{t.retry}</VText>
+                            </TouchableOpacity>
+                        </>
+                    )}
+                </View>
+            ) : (
+                <ScrollView
+                    style={styles.scrollView}
+                    contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomPadding }]}
+                    showsVerticalScrollIndicator={false}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={Color.primary} colors={[Color.primary]} />}
+                >
+                    <VText style={styles.screenSubtitle}>{t.profileSubtitle}</VText>
+                    {loadError && (
+                        <TouchableOpacity accessibilityRole="button" onPress={refresh} style={styles.refreshError}>
+                            <Feather name="refresh-cw" size={17} color={Color.primary} />
+                            <VText style={styles.refreshErrorText}>{t.loadError} {t.retry}</VText>
+                        </TouchableOpacity>
+                    )}
+                    <View style={styles.heroCard}>
+                        <View pointerEvents="none" style={styles.heroOrbit} />
+                        <View style={styles.heroRow}>
+                            <TouchableOpacity
+                                accessibilityRole="button" accessibilityLabel={uploading ? t.uploading : t.changeProfilePhoto}
+                                accessibilityState={{ disabled: uploading, busy: uploading }} disabled={uploading}
+                                activeOpacity={0.8} onPress={() => setPhotoModalVisible(true)} style={styles.avatarWrapper}
+                            >
+                                {user.imagePath && !avatarFailed ? (
+                                    <Image source={{ uri: user.imagePath }} style={styles.avatarImage} onError={() => setAvatarFailed(true)} />
+                                ) : (
+                                    <View style={styles.avatarFallback}><VText bold style={styles.avatarInitials}>{initials}</VText></View>
+                                )}
+                                <View style={styles.cameraBadge}>
+                                    {uploading ? <ActivityIndicator size="small" color={Color.primary} /> : <Feather name="camera" size={14} color={Color.primary} />}
                                 </View>
                             </TouchableOpacity>
+                            <View style={styles.heroInfo}>
+                                <View style={styles.driverRow}>
+                                    <MaterialCommunityIcons name="steering" size={14} color="#CEC8FF" />
+                                    <VText semiBold style={styles.driverLabel}>{t.driver}</VText>
+                                </View>
+                                <VText bold style={styles.userName}>{fullName}</VText>
+                                <TouchableOpacity accessibilityRole="button" onPress={editProfile} style={styles.editProfile} activeOpacity={0.7}>
+                                    <VText semiBold style={styles.editProfileText}>{t.editProfile}</VText>
+                                    <Feather name="arrow-up-right" size={15} color="#DED9FF" />
+                                </TouchableOpacity>
+                            </View>
                         </View>
-                        <View style={{ borderBottomWidth: 1, borderBottomColor: Color.greyBorder, marginVertical: 15 }}></View>
-                        <TouchableOpacity style={{ borderRadius: 30, flexDirection: 'row', borderWidth: 1, borderColor: Color.purple, paddingVertical: 15, justifyContent: 'center' }}>
-                            <MaterialCommunityIcons name="file-document-multiple" size={18} color={Color.purple} />
-                            <VText bold style={{ color: Color.purple, fontSize: 13, textTransform: 'capitalize', marginLeft: 5 }}>Belgeler</VText>
-                        </TouchableOpacity>
+                        <View style={styles.statsRow}>
+                            <ProfileStat star value={rating} label={t.rating} />
+                            <ProfileStat bordered value={vehicles.length} label={t.vehicles} />
+                            <ProfileStat bordered value={companies.length} label={t.companies} />
+                        </View>
+                    </View>
+
+                    <View style={styles.section}>
+                        <View style={styles.sectionHeader}>
+                            <View style={styles.sectionHeading}>
+                                <VText bold style={styles.sectionTitle}>{t.myCars}</VText>
+                                <View style={styles.countBadge}><VText bold style={styles.countText}>{vehicles.length}</VText></View>
+                            </View>
+                            {vehicles.length > 0 && (
+                                <TouchableOpacity accessibilityRole="button" onPress={() => navigation.navigate('CarChange', { data: { vehicles } })} style={styles.sectionAction}>
+                                    <Feather name="repeat" size={14} color={Color.primary} />
+                                    <VText bold style={styles.sectionActionText}>{t.change}</VText>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                        {selectedVehicle ? (
+                            <MyCarComponent navigation={navigation} item={selectedVehicle} cultureResource={t} />
+                        ) : (
+                            <View style={styles.emptyCard}>
+                                <View style={styles.emptyIcon}><MaterialCommunityIcons name="car-outline" size={27} color={Color.primary} /></View>
+                                <VText bold style={styles.emptyTitle}>{t.noVehicles}</VText>
+                                <VText style={styles.emptySubtitle}>{t.noVehiclesSub}</VText>
+                            </View>
+                        )}
+                        {otherVehicles.length > 0 && (
+                            <>
+                                <VText semiBold style={styles.otherVehiclesLabel}>{t.otherVehicles}</VText>
+                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.otherVehicles}>
+                                    {otherVehicles.map((item, index) => <MyCarsComponent key={item.id ?? item.plate ?? index} item={item} cultureResource={t} navigation={navigation} />)}
+                                </ScrollView>
+                            </>
+                        )}
+                    </View>
+
+                    <View style={styles.section}>
+                        <View style={styles.sectionHeader}><VText bold style={styles.sectionTitle}>{t.accountSettings}</VText></View>
+                        <View style={styles.menuCard}>
+                            <MenuRow icon="user" title={t.myPersonalInformations} subtitle={t.personalInfoSub} onPress={editProfile} />
+                            <MenuRow icon="file-text" title={t.myDocuments} subtitle={t.documentsSub} onPress={() => navigation.navigate('MyDocuments', { data: { user } })} />
+                            <MenuRow icon="briefcase" title={t.institutionsIServe} subtitle={t.companiesSub} onPress={() => navigation.navigate('ServeCompany', { data: { companies } })} last />
+                        </View>
+                    </View>
+                    <View style={styles.section}>
+                        <View style={styles.sectionHeader}><VText bold style={styles.sectionTitle}>{t.preferences}</VText></View>
+                        <View style={styles.menuCard}>
+                            <MenuRow icon="globe" title={t.languageSelect} subtitle={language.title} trailing={<Image source={language.flag} style={styles.flag} />} onPress={() => navigation.navigate('CultureSelection')} />
+                            <MenuRow icon="help-circle" title={t.supportHelp} subtitle={t.supportSub} onPress={openSupport} external last />
+                        </View>
+                    </View>
+                    <TouchableOpacity accessibilityRole="button" activeOpacity={0.7} onPress={() => setLogoutVisible(true)} style={styles.logoutButton}>
+                        <Feather name="log-out" size={18} color="#B44750" />
+                        <VText bold style={styles.logoutText}>{t.logout}</VText>
+                    </TouchableOpacity>
+                    <View style={styles.footer}>
+                        <VText bold style={styles.footerBrand}>vitaDrive <VText style={styles.footerProduct}>Transfer</VText></VText>
+                        <VText style={styles.footerVersion}>{t.appVersion} {Constants.expoConfig?.version ?? '—'}</VText>
+                        <VText style={styles.footerCompany}>vita RnD Teknoloji A.Ş. · info@vitarnd.com</VText>
+                    </View>
+                </ScrollView>
+            )}
+
+            <Modal visible={photoModalVisible} transparent animationType="slide" onRequestClose={() => setPhotoModalVisible(false)} onDismiss={onPhotoSheetDismiss}>
+                <View style={styles.sheetBackdrop}>
+                    <Pressable accessibilityRole="button" accessibilityLabel={t.close} style={StyleSheet.absoluteFill} onPress={() => setPhotoModalVisible(false)} />
+                    <View accessibilityViewIsModal style={[styles.sheet, { maxHeight: windowHeight - insets.top - 20, paddingBottom: Math.max(insets.bottom, 20) }]}>
+                        <ScrollView style={styles.modalScroll} bounces={false}>
+                            <View style={styles.sheetHandle} />
+                            <View style={styles.sheetHeading}>
+                                <VText bold style={styles.sheetTitle}>{t.changeProfilePhoto}</VText>
+                                <TouchableOpacity accessibilityRole="button" accessibilityLabel={t.close} onPress={() => setPhotoModalVisible(false)} style={styles.closeButton}>
+                                    <Feather name="x" size={21} color="#6B778C" />
+                                </TouchableOpacity>
+                            </View>
+                            <MenuRow icon="camera" title={t.takeAPhoto} subtitle={t.takePhotoSub} onPress={() => selectPhotoSource('camera')} />
+                            <MenuRow icon="image" title={t.chooseFromLibrary} subtitle={t.choosePhotoSub} onPress={() => selectPhotoSource('library')} last />
+                            <TouchableOpacity accessibilityRole="button" onPress={() => setPhotoModalVisible(false)} style={styles.cancelButton}>
+                                <VText bold style={styles.cancelText}>{t.canceled}</VText>
+                            </TouchableOpacity>
+                        </ScrollView>
                     </View>
                 </View>
-            </View> */}
-                                <View style={{ backgroundColor: Color.headerGrey, paddingBottom: 20, borderBottomWidth: 1, borderBottomColor: Color.greyBorder }}>
-                                    <View style={{ padding: 20, }}>
-                                        <VText bold style={{ fontSize: 19, textTransform: 'capitalize' }}>{cultureResource.driverInformation}</VText>
-                                    </View>
-                                    <View style={{ backgroundColor: Color.white }}>
-                                        <TouchableOpacity onPress={() => { navigation.navigate('PersonalInformation', { data: { user: user } }) }} style={{ flexDirection: 'row', padding: 20, alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: Color.greyBorder }}>
-                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                                <Feather name="chevron-right" size={15} color="black" />
-                                                <VText bold style={{ marginLeft: 10, fontSize: 15, textTransform: 'capitalize' }}>{cultureResource.myPersonalInformations}</VText>
-                                            </View>
-                                            <Feather name="chevron-right" size={15} color="black" />
-                                        </TouchableOpacity>
-                                        <TouchableOpacity onPress={() => { navigation.navigate('MyDocuments', { data: { user: user } }) }} style={{ flexDirection: 'row', padding: 20, alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: Color.greyBorder }}>
-                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                                <Feather name="chevron-right" size={15} color="black" />
-                                                <VText bold style={{ marginLeft: 10, fontSize: 15, textTransform: 'capitalize' }}>{cultureResource.myDocuments}</VText>
-                                            </View>
-                                            <Feather name="chevron-right" size={15} color="black" />
-                                        </TouchableOpacity>
-                                        <TouchableOpacity onPress={() => { navigation.navigate('ServeCompany', { data: { companies: companies } }) }} style={{ flexDirection: 'row', padding: 20, alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: Color.greyBorder }}>
-                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                                <Feather name="chevron-right" size={15} color="black" />
-                                                <VText bold style={{ marginLeft: 10, fontSize: 15, textTransform: 'capitalize' }}>{cultureResource.institutionsIServe}</VText>
-                                            </View>
-                                            <Feather name="chevron-right" size={15} color="black" />
-                                        </TouchableOpacity>
-                                        <TouchableOpacity onPress={() => { navigation.navigate('CultureSelection') }} style={{ flexDirection: 'row', padding: 20, alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: Color.greyBorder }}>
-                                            <View style={{ flexDirection: 'row', alignItems: 'center', }}>
-                                                <Feather name="chevron-right" size={15} color="black" />
-                                                <VText bold style={{ marginLeft: 10, fontSize: 15, textTransform: 'capitalize' }}>
-                                                    {cultureStore.culture == "tr" ? "Dil Seçimi:" :
-                                                        cultureStore.culture == 'en' ? "Language:" :
-                                                            cultureStore.culture == 'de' ? 'Sprache:' :
-                                                                'Dil Seçimi:'}
-                                                </VText>
-                                                <Image width={24} height={17} source={flag} style={{ marginLeft: 10 }}></Image>
-                                            </View>
-                                            <Feather name="chevron-right" size={15} color="black" />
-                                        </TouchableOpacity>
-                                    </View>
-                                </View>
-                                {/* <View style={{ backgroundColor: Color.headerGrey, paddingBottom: 20, borderBottomWidth: 1, borderBottomColor: Color.greyBorder }}>
-                <View style={{ padding: 20, }}>
-                    <VText bold style={{ fontSize: 19, textTransform: 'capitalize' }}>Entegrasyonlar</VText>
-                </View>
-                <View style={{ backgroundColor: Color.white }}>
-                    <TouchableOpacity onPress={() => { navigation.navigate('FuelCard') }} style={{ flexDirection: 'row', padding: 20, alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: Color.greyBorder }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <Feather name="chevron-right" size={15} color="black" />
-                            <VText bold style={{ marginLeft: 10, fontSize: 15, textTransform: 'capitalize' }}>Yakıt Kartı</VText>
-                        </View>
-                        <Feather name="chevron-right" size={15} color="black" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => { navigation.navigate('GPSDevice') }} style={{ flexDirection: 'row', padding: 20, alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: Color.greyBorder }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <Feather name="chevron-right" size={15} color="black" />
-                            <VText bold style={{ marginLeft: 10, fontSize: 15, textTransform: 'capitalize' }}>GPS Cihazı</VText>
-                        </View>
-                        <Feather name="chevron-right" size={15} color="black" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => { navigation.navigate('UEDTSInformation') }} style={{ flexDirection: 'row', padding: 20, alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: Color.greyBorder }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <Feather name="chevron-right" size={15} color="black" />
-                            <VText bold style={{ marginLeft: 10, fontSize: 15, textTransform: 'capitalize' }}>UEDTS Bilgileri</VText>
-                        </View>
-                        <Feather name="chevron-right" size={15} color="black" />
-                    </TouchableOpacity>
-                </View>
-            </View> */}
-                                {/* <View style={{ backgroundColor: Color.headerGrey, paddingBottom: 20, borderBottomWidth: 1, borderBottomColor: Color.greyBorder }}>
-                <View style={{ flexDirection: 'row', padding: 20, justifyContent: 'space-between', alignItems: 'center' }}>
-                    <VText bold style={{ fontSize: 19, textTransform: 'capitalize' }}>Değerlendirmeler</VText>
-                    <TouchableOpacity onPress={() => { navigation.navigate('Evaluations') }} bold style={{ fontSize: 12, textTransform: 'uppercase', color: Color.purple }}>
-                        <VText bold style={{ fontSize: 13, textTransform: 'capitalize', color: Color.purple }}>Tümünü Gör</VText>
-                    </TouchableOpacity>
-                </View>
-                <View style={{ paddingHorizontal: 20, marginBottom: 100 }}>
-                    <Evaluaitons></Evaluaitons>
-                </View>
-            </View> */}
-                            </View>
-                            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Color.headerGrey, paddingBottom: 200, paddingTop: 50 }}>
-                                <SvgUri height={40} width={80} uri='https://store.vitarnd.com/vitakids/assets/images/vita.svg' ></SvgUri>
-                                <Text style={{ fontSize: 16, marginVertical: 5, fontWeight: '600' }}>vita RnD Teknoloji AŞ</Text>
-                                <Text style={{ fontSize: 14, fontWeight: '400' }}>info@vitarnd.com</Text>
-                                <Text style={{ fontSize: 14, fontWeight: '400' }}>App version: {Constants.expoConfig.version}</Text>
-                            </View>
-                        </ScrollView >
-                        <Modal
-                            visible={photoModalVisible}
-                            transparent={true}
-                            animationType="slide"
-                            onRequestClose={() => setPhotoModalVisible(false)}
-                        >
-                            <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} activeOpacity={1} onPress={() => setPhotoModalVisible(false)}>
-                                <TouchableOpacity activeOpacity={1} style={{ backgroundColor: 'white', paddingHorizontal: 20, paddingBottom: 40, borderTopLeftRadius: 20, borderTopRightRadius: 20 }}>
-                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 20, }}>
-                                        <VText bold darkGrey style={{ fontSize: 18, }}>{cultureResource.changeProfilePhoto}</VText>
-                                        <TouchableOpacity style={{ paddingVertical: 5 }} onPress={() => setPhotoModalVisible(false)}>
-                                            <AntDesign name="close" size={24} color={Color.darkGrey} />
-                                        </TouchableOpacity>
-                                    </View>
-                                    <TouchableOpacity onPress={() => { setPhotoModalVisible(false); takePhoto(); }} style={{ marginTop: 20, flexDirection: 'row', alignItems: 'center', padding: 20, borderWidth: 1, borderRadius: 10, borderColor: Color.purple }}>
-                                        <Entypo name="camera" size={24} color={Color.darkGrey} />
-                                        <VText bold darkGrey style={{ fontSize: 15, marginLeft: 10 }}>{cultureResource.takeAPhoto}</VText>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity onPress={() => { setPhotoModalVisible(false); pickImage(); }} style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', padding: 20, borderWidth: 1, borderRadius: 10, borderColor: Color.purple, marginBottom: 10 }}>
-                                        <FontAwesome name="photo" size={24} color="black" />
-                                        <VText bold darkGrey style={{ fontSize: 15, marginLeft: 10 }}>{cultureResource.chooseFromLibrary}</VText>
-                                    </TouchableOpacity>
-                                </TouchableOpacity>
+            </Modal>
+
+            <Modal visible={logoutVisible} transparent animationType="fade" onRequestClose={() => setLogoutVisible(false)}>
+                <View style={[styles.dialogBackdrop, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 20 }]}>
+                    <View accessibilityViewIsModal style={[styles.dialog, { maxHeight: windowHeight - insets.top - insets.bottom - 40 }]}>
+                        <ScrollView style={styles.modalScroll} bounces={false}>
+                            <View style={styles.logoutDialogIcon}><Feather name="log-out" size={26} color="#B44750" /></View>
+                            <VText bold style={styles.dialogTitle}>{t.logout}</VText>
+                            <VText style={styles.dialogMessage}>{t.logOutText}</VText>
+                            <TouchableOpacity accessibilityRole="button" onPress={userLogOut} style={styles.confirmLogout}>
+                                <VText bold style={styles.primaryButtonText}>{t.logout}</VText>
                             </TouchableOpacity>
-                        </Modal>
-                        <Modal
-                            animationType="slide"
-                            transparent={true}
-                            visible={change}
-                            onRequestClose={() => { setChange(false) }}>
-                            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', }}>
-                                <View style={styles.modalView}>
-                                    {status == 0 ? <AntDesign name="check" size={60} color="green" /> : <AntDesign name="close" size={60} color="red" />}
-                                    <VText bold style={{ marginTop: 20, fontSize: 20 }}>
-                                        {status == 0 ? cultureResource.successful : cultureResource.failed}
-                                    </VText>
-                                    <VText regular style={{ marginTop: 20 }}>
-                                        {responseMessage}
-                                    </VText>
-                                    <VButton primary style={{ paddingHorizontal: 40, paddingVertical: 10, marginTop: 25 }}
-                                        onPress={() => { setChange(!change) }}>
-                                        <VText white bold>{cultureResource.ok}</VText>
-                                    </VButton>
-                                </View>
-                            </View>
-                        </Modal>
-                        <Modal
-                            animationType="slide"
-                            transparent={true}
-                            visible={userState}
-                            onRequestClose={() => { setUserState(false) }}>
-                            <View style={{ flex: 1, justifyContent: 'center', width: '80%', alignSelf: 'center' }}>
-                                <View style={styles.modalView}>
-                                    <Ionicons name="warning" size={100} color="orange" />
-                                    <VText bold style={{ fontSize: 25, }}>
-                                        {cultureResource.warning}
-                                    </VText>
-                                    <VText regular style={{ marginTop: 20, textAlign: 'center', fontSize: 18, }}>
-                                        {cultureResource.logOutText}
-                                    </VText>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 25, }}>
-                                        <VButton primary style={{ flex: 1, paddingVertical: 10, marginRight: 10 }}
-                                            onPress={() => { userLogOut() }}>
-                                            <VText white bold>{cultureResource.logout}</VText>
-                                        </VButton>
-                                        <VButton style={{ flex: 1, paddingVertical: 10, borderWidth: 1, borderColor: Color.purple, backgroundColor: Color.white }}
-                                            onPress={() => { setUserState(false) }}>
-                                            <VText purple bold>{cultureResource.canceled}</VText>
-                                        </VButton>
-                                    </View>
-                                </View>
-                            </View>
-                        </Modal>
-                        <StatusBar barStyle='dark-content'></StatusBar>
-                    </>
-                )
-            }
-        </>
-    )
+                            <TouchableOpacity accessibilityRole="button" onPress={() => setLogoutVisible(false)} style={styles.cancelButton}>
+                                <VText bold style={styles.cancelText}>{t.canceled}</VText>
+                            </TouchableOpacity>
+                        </ScrollView>
+                    </View>
+                </View>
+            </Modal>
+        </View>
+    );
+};
 
-}
-
-export default Index
+export default Index;
 
 const styles = StyleSheet.create({
-    modalView: {
-        backgroundColor: 'white',
-        borderRadius: 20,
-        paddingVertical: 20,
-        paddingHorizontal: 20,
-        alignItems: 'center',
-        shadowColor: '#000',
-        shadowOffset: {
-            width: 0,
-            height: 2,
-        },
-        shadowOpacity: 0.25,
-        shadowRadius: 4,
-        elevation: 5,
-    },
-})
+    screen: { flex: 1, backgroundColor: '#F5F6FA' },
+    topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 22, paddingTop: 16, paddingBottom: 8 },
+    heading: { flex: 1, paddingRight: 12 },
+    eyebrow: { fontSize: 10, letterSpacing: 2.2, color: '#78758C', marginBottom: 4 },
+    screenTitle: { fontSize: 30, letterSpacing: -0.9, color: '#182230' },
+    helpButton: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E8EBF2', alignItems: 'center', justifyContent: 'center' },
+    scrollView: { flex: 1 },
+    scrollContent: { paddingTop: 0 },
+    screenSubtitle: { fontSize: 14, lineHeight: 21, color: '#6B778C', marginHorizontal: 22, marginBottom: 22 },
+    heroCard: { marginHorizontal: 20, borderRadius: 24, backgroundColor: '#29263F', padding: 20, overflow: 'hidden' },
+    heroOrbit: { position: 'absolute', width: 190, height: 190, borderRadius: 95, borderWidth: 28, borderColor: 'rgba(177, 160, 255, 0.055)', top: -90, right: -58 },
+    heroRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
+    avatarWrapper: { width: 76, height: 76, marginRight: 17 },
+    avatarImage: { width: 76, height: 76, borderRadius: 26, borderWidth: 2, borderColor: '#6A617F', backgroundColor: '#4B4462' },
+    avatarFallback: { width: 76, height: 76, borderRadius: 26, borderWidth: 2, borderColor: '#6A617F', backgroundColor: '#4B4462', alignItems: 'center', justifyContent: 'center' },
+    avatarInitials: { color: '#F5F0FF', fontSize: 26 },
+    cameraBadge: { position: 'absolute', right: -4, bottom: -3, width: 28, height: 28, borderRadius: 14, borderWidth: 3, borderColor: '#29263F', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
+    heroInfo: { flex: 1, minWidth: 0 },
+    driverRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 5 },
+    driverLabel: { color: '#CEC8FF', fontSize: 12 },
+    userName: { color: '#FFFFFF', fontSize: 23, lineHeight: 29, letterSpacing: -0.5 },
+    editProfile: { minHeight: 44, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 7, paddingTop: 4 },
+    editProfileText: { fontSize: 12, color: '#DED9FF' },
+    statsRow: { flexDirection: 'row', paddingTop: 19, marginTop: 17, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.12)' },
+    stat: { flex: 1, alignItems: 'center', paddingHorizontal: 5 },
+    statBorder: { borderLeftWidth: 1, borderLeftColor: 'rgba(255,255,255,0.12)' },
+    statValueRow: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 26 },
+    statValue: { color: '#FFFFFF', fontSize: 19 },
+    statLabel: { color: '#C4BFD6', fontSize: 11, textAlign: 'center', marginTop: 3 },
+    section: { marginTop: 25 },
+    sectionHeader: { marginHorizontal: 22, marginBottom: 12, minHeight: 30, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+    sectionHeading: { flexDirection: 'row', alignItems: 'center', gap: 9, flexShrink: 1 },
+    sectionTitle: { fontSize: 17, color: '#182230', letterSpacing: -0.3, flexShrink: 1 },
+    countBadge: { minWidth: 23, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: '#E9E6FA', alignItems: 'center' },
+    countText: { fontSize: 11, color: '#6456C6' },
+    sectionAction: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 44, paddingLeft: 8 },
+    sectionActionText: { fontSize: 12, color: Color.primary },
+    otherVehiclesLabel: { fontSize: 12, color: '#6B778C', marginHorizontal: 22, marginTop: 18, marginBottom: 10 },
+    otherVehicles: { paddingHorizontal: 20, paddingBottom: 2 },
+    menuCard: { marginHorizontal: 20, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E8EBF2', borderRadius: 20, overflow: 'hidden' },
+    menuRow: { flexDirection: 'row', alignItems: 'center', paddingLeft: 15 },
+    menuIcon: { width: 40, height: 40, borderRadius: 13, backgroundColor: '#F0EEFF', alignItems: 'center', justifyContent: 'center', marginRight: 13 },
+    menuBody: { flex: 1, flexDirection: 'row', alignItems: 'center', minHeight: 82, paddingVertical: 17, paddingRight: 15, gap: 10 },
+    menuBorder: { borderBottomWidth: 1, borderBottomColor: '#EFF0F5' },
+    menuText: { flex: 1, minWidth: 0 },
+    menuTitle: { color: '#263244', fontSize: 14, lineHeight: 20 },
+    menuSubtitle: { color: '#6B778C', fontSize: 12, lineHeight: 18, marginTop: 3 },
+    flag: { width: 22, height: 16, borderRadius: 3, resizeMode: 'contain' },
+    logoutButton: { marginHorizontal: 20, marginTop: 24, minHeight: 54, padding: 14, borderRadius: 16, borderWidth: 1, borderColor: '#EADFE3', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 9 },
+    logoutText: { fontSize: 14, color: '#B44750' },
+    footer: { alignItems: 'center', paddingTop: 28, paddingHorizontal: 20 },
+    footerBrand: { fontSize: 17, color: '#7B7B91', letterSpacing: -0.4 },
+    footerProduct: { fontSize: 17, color: '#9392A4' },
+    footerVersion: { marginTop: 5, fontSize: 11, color: '#797F91' },
+    footerCompany: { marginTop: 8, fontSize: 10, color: '#797F91', textAlign: 'center' },
+    initialState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
+    emptyCard: { marginHorizontal: 20, padding: 24, borderRadius: 20, borderWidth: 1, borderColor: '#E8EBF2', backgroundColor: '#FFFFFF', alignItems: 'center' },
+    emptyIcon: { width: 58, height: 58, borderRadius: 18, backgroundColor: '#F0EEFF', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+    emptyTitle: { fontSize: 16, color: '#182230', textAlign: 'center' },
+    emptySubtitle: { fontSize: 13, lineHeight: 20, color: '#6B778C', marginTop: 7, textAlign: 'center' },
+    refreshError: { marginHorizontal: 20, marginBottom: 14, padding: 14, borderRadius: 12, backgroundColor: '#F0EEFF', flexDirection: 'row', alignItems: 'center', gap: 10 },
+    refreshErrorText: { fontSize: 12, color: '#6456C6', flex: 1 },
+    primaryButton: { marginTop: 20, backgroundColor: Color.primary, minHeight: 48, borderRadius: 14, paddingHorizontal: 24, paddingVertical: 14, alignItems: 'center', justifyContent: 'center' },
+    primaryButtonText: { fontSize: 14, color: '#FFFFFF', textAlign: 'center' },
+    sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(18, 22, 36, 0.48)' },
+    modalScroll: { flexGrow: 0, flexShrink: 1 },
+    sheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingTop: 10, paddingHorizontal: 20 },
+    sheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: '#DBDDE7', alignSelf: 'center', marginBottom: 17 },
+    sheetHeading: { flexDirection: 'row', alignItems: 'center', paddingBottom: 12, gap: 12 },
+    sheetTitle: { flex: 1, fontSize: 21, color: '#182230', letterSpacing: -0.5 },
+    closeButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#F5F6FA', alignItems: 'center', justifyContent: 'center' },
+    cancelButton: { minHeight: 50, padding: 14, justifyContent: 'center', alignItems: 'center', borderRadius: 14, backgroundColor: '#F5F6FA', marginTop: 12 },
+    cancelText: { fontSize: 14, color: '#596376', textAlign: 'center' },
+    dialogBackdrop: { flex: 1, justifyContent: 'center', paddingHorizontal: 26, backgroundColor: 'rgba(18, 22, 36, 0.48)' },
+    dialog: { backgroundColor: '#FFFFFF', borderRadius: 26, padding: 24, width: '100%', maxWidth: 420, alignSelf: 'center' },
+    logoutDialogIcon: { alignSelf: 'center', width: 60, height: 60, borderRadius: 20, backgroundColor: '#FBEEF0', alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
+    dialogTitle: { color: '#182230', fontSize: 22, textAlign: 'center' },
+    dialogMessage: { color: '#6B778C', fontSize: 14, lineHeight: 22, textAlign: 'center', marginTop: 10, marginBottom: 22 },
+    confirmLogout: { minHeight: 50, padding: 14, borderRadius: 14, backgroundColor: '#B44750', justifyContent: 'center', alignItems: 'center' },
+});

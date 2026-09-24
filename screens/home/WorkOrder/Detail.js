@@ -4,7 +4,6 @@ import React, { useEffect, useRef, useState, } from 'react'
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import FontAwesome5 from '@expo/vector-icons/FontAwesome5';
 import Color from '../../../components/Color';
-import { SvgUri } from 'react-native-svg';
 import { useDispatch } from 'react-redux'
 import VText from '../../../components/VText';
 import VButton from '../../../components/VButton';
@@ -19,7 +18,6 @@ import Auth from '../../../services/vita/Auth';
 import { getDatabase, ref, onValue, remove, off } from "firebase/database";
 import { getAuth } from 'firebase/auth';
 import { useIsFocused } from '@react-navigation/native';
-import { MaterialIcons } from '@expo/vector-icons';
 import { Ionicons } from '@expo/vector-icons';
 import { FontAwesome } from '@expo/vector-icons';
 import { Entypo } from '@expo/vector-icons';
@@ -40,8 +38,67 @@ import ChangeWaitingStatus from '../../../services/vita/ChangeWaitingStatus';
 import CounterUp from '../../../components/CounterUp';
 import useWorkStore from '../../../zustand/workStore';
 import ToastMessage from '../../../components/ToastMessage';
+import OdometerCaptureModal from '../../../components/OdometerCapture';
+import Odometer from '../../../services/vita/Odometer';
 import CancelBreakStatus from '../../../services/vita/CancelBreakStatus';
 import { designName } from 'expo-device';
+
+// ── TASARIM SABITLERI (liste karti ile ayni olcek) ─────────────────────────────
+const D = {
+  canvas: '#FFFFFF',
+  surface: '#F8F9FC',
+  hairline: '#ECEEF2',
+  border: '#DCE0EA',
+  ink900: '#0B0F19',
+  ink700: '#404C5B',
+  ink500: '#6B7280',
+  ink300: '#9AA1AE',
+  accent: '#7162EC',
+  accentSoft: 'rgba(113,98,236,0.08)',
+};
+
+// Durum paleti liste kartiyla birebir ayni kaynaktan beslenir.
+const D_DURUM = {
+  iptal: { zemin: 'rgba(224,48,36,0.10)', yazi: '#E03024' },
+  uyari: { zemin: 'rgba(255,170,29,0.14)', yazi: '#9A6200' },
+  tamam: { zemin: 'rgba(28,201,97,0.12)', yazi: '#0F8B44' },
+  aktif: { zemin: 'rgba(113,98,236,0.10)', yazi: '#7162EC' },
+  notr: { zemin: 'rgba(107,114,128,0.10)', yazi: '#6B7280' },
+};
+
+// Eskiden 8 ayri kosullu blok vardi; tek yerde toplandi.
+function detayDurumu(status, ck, dateTimeStr) {
+  switch (Number(status)) {
+    case -3: return { ...D_DURUM.iptal, etiket: ck.canceled, ikon: 'alert-circle-outline' };
+    case -2: return { ...D_DURUM.iptal, etiket: ck.noshow, ikon: 'account-alert-outline' };
+    case 0: return { ...D_DURUM.aktif, etiket: ck.willBegin, ikon: 'progress-clock' };
+    case 1: return { ...D_DURUM.tamam, etiket: ck.hasCompleted, ikon: 'check-circle-outline' };
+    case 2: return { ...D_DURUM.uyari, etiket: ck.late, ikon: 'clock-alert-outline' };
+    case 3: return { ...D_DURUM.aktif, etiket: ck.started, ikon: 'play-circle-outline' };
+    case 4: return { ...D_DURUM.aktif, etiket: ck.passengerRecieved, ikon: 'account-check-outline' };
+    case 5: return { ...D_DURUM.iptal, etiket: ck.notCompleted, ikon: 'close-circle-outline' };
+    default: return { ...D_DURUM.notr, etiket: dateTimeStr || '', ikon: 'clock-outline' };
+  }
+}
+
+// Uzak SvgUri istekleri yerine yerel glif (her render'da ag istegi atiyordu).
+function detayTipIkonu(transferType) {
+  switch (Number(transferType)) {
+    case 2: return 'swap-horizontal';
+    case 3: return 'steering';
+    case 4: return 'bus';
+    default: return 'ray-start-arrow';
+  }
+}
+
+// Adim gorsel durumu. "aktif" = su an basilabilir olan adim; surucu hangi adimda
+// oldugunu tek bakista gorsun diye seridi mor yanar.
+function adimDurumu({ tamam, red, aktif }) {
+  if (red) return { serit: '#E03024', zemin: 'rgba(224,48,36,0.10)', yazi: '#E03024', ikon: 'close' };
+  if (tamam) return { serit: '#1CC961', zemin: 'rgba(28,201,97,0.12)', yazi: '#0F8B44', ikon: 'check' };
+  if (aktif) return { serit: '#7162EC', zemin: 'rgba(113,98,236,0.10)', yazi: '#7162EC', ikon: 'chevron-right' };
+  return { serit: '#DCE0EA', zemin: 'rgba(107,114,128,0.10)', yazi: '#9AA1AE', ikon: 'circle-outline' };
+}
 
 const Detail = ({ navigation, route }) => {
     const responseStore = useResponseStore((state) => state)
@@ -85,6 +142,8 @@ const Detail = ({ navigation, route }) => {
     const [transferWaitMessage, setTransferWaitMessage] = useState('')
     const [keyboardOpen, setKeyboardOpen] = useState(false);
     const [showToast, setShowToast] = useState(false)
+    const [odometerVisible, setOdometerVisible] = useState(false);
+    const [odometerMode, setOdometerMode] = useState('start');
 
     useEffect(() => {
         const showSub = Keyboard.addListener('keyboardDidShow', () => {
@@ -233,16 +292,22 @@ const Detail = ({ navigation, route }) => {
             }
         });
     }
-    function updateWorkOrderStatus(id, type, stepId, step, description) {
+    function updateWorkOrderStatus(id, type, stepId, step, description, kilometer) {
         dispatch(setLoading(true));
         Location.getLastKnownPositionAsync().then((res) => {
+            // Onbellekte konum yoksa null doner (soguk acilis, kapali otopark, izin yeni verilmis).
             const request = {
                 id: id,
                 type: type,
                 stepId: stepId,
-                latitude: res.coords.latitude,
-                longitude: res.coords.longitude,
+                latitude: res?.coords?.latitude ?? 0,
+                longitude: res?.coords?.longitude ?? 0,
                 description: description
+            }
+            // Kilometre kendi ucundan gonderiliyor; API bu istekte de bekliyorsa
+            // services/vita/Odometer.js icindeki attachToWorkOrderStatus true yapilir.
+            if (Odometer.attachToWorkOrderStatus && kilometer != null) {
+                request.kilometer = kilometer;
             }
             WorkOrder.UpdateWorkOrderStatus(request, cultureStore.culture).then(response => {
                 if (response.status == 200) {
@@ -337,6 +402,13 @@ const Detail = ({ navigation, route }) => {
                     dispatch(setLoading(false));
                 }
             });
+        }).catch((error) => {
+            // catch yoktu: konum/istek zinciri patlarsa setLoading(false) hic calismiyor ve
+            // ekran sonsuz spinner'da kaliyordu.
+            console.warn('updateWorkOrderStatus:', error);
+            dispatch(setHasError(true));
+            dispatch(setErrorMessage(cultureStore.culture == 'tr' ? 'Beklenmedik bir hata oluştu. Lütfen daha sonra tekrar deneyin.' : cultureStore.culture == 'en' ? 'An unexpected error occured. Please try again later.' : cultureStore.culture == 'de' ? 'Ein unerwarteter Fehler ist aufgetreten. Bitte versuchen Sie es später erneut.' : 'Beklenmedik bir hata oluştu. Lütfen daha sonra tekrar deneyin.'));
+            dispatch(setLoading(false));
         });
 
     }
@@ -636,6 +708,39 @@ const Detail = ({ navigation, route }) => {
             Linking.openURL(webUrl).catch((err) => console.error('WhatsApp açılamadı:', err))
         );
     };
+    // Transfer durumunu ilerletir. Odometre akisi calistiysa kilometre de gonderilir,
+    // calismadiysa kilometer null gecer ve istege hic eklenmez.
+    function transferDurumunuIlerlet(mode, kilometer) {
+        if (mode == 'finish') {
+            updateWorkOrderStatus(item.id, 4, 0, null, description, kilometer);
+            return;
+        }
+        if (workStore?.workData?.breakEnd != null) {
+            cancelBreakStatus();
+        }
+        updateWorkOrderStatus(item.id, 1, 0, null, null, kilometer);
+    }
+
+    // Surus baslangici ve bitisinde arac kilometresi fotografla dogrulanir.
+    // Bu akis yalnizca odometre kapsamindaki firmalarda (Odometer.domain) calisir;
+    // kapsam disindaki surucu kamerayi hic gormez, dogrudan durum guncellenir.
+    function openOdometer(mode) {
+        Keyboard.dismiss();
+
+        if (!Odometer.isEnabledForUser()) {
+            transferDurumunuIlerlet(mode, null);
+            return;
+        }
+
+        setOdometerMode(mode);
+        setOdometerVisible(true);
+    }
+
+    function onOdometerCompleted(result) {
+        setOdometerVisible(false);
+        transferDurumunuIlerlet(odometerMode, result.kilometer);
+    }
+
     function cancelBreakStatus() {
         let request = {
             statusType: workStore.workData.currentStatus,
@@ -674,439 +779,379 @@ const Detail = ({ navigation, route }) => {
         )
     }
     else {
+        const durum = detayDurumu(item.status, cultureResource, item.dateTimeStr);
+        const tipMetni = item.transferType == 2 ? cultureResource.transferType2
+            : item.transferType == 3 ? cultureResource.transferType3
+                : item.transferType == 4 ? cultureResource.transferType4
+                    : cultureResource.transferType1;
+        const ucretVar = item.priceText != null && item.priceText != '0,00' && item.priceText != '0';
+
         return (
             <>
                 <View style={styles.container}>
-                    <ScrollView ref={scrollRef} contentContainerStyle={{ paddingBottom: 100 }}>
-                        <SafeAreaView style={styles.header}>
-                            <TouchableOpacity onPress={() => { navigation.goBack() }}>
-                                <MaterialCommunityIcons name='arrow-left' size={34} color={Color.black}></MaterialCommunityIcons>
-                            </TouchableOpacity>
-                        </SafeAreaView>
-                        <Image style={styles.map} source={{ uri: item.routeImage }}></Image>
+                    <ScrollView ref={scrollRef} contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
+
+                        {/* 1 — HARITA + GERI (geri butonu haritanin uzerinde yuzer) */}
+                        <View style={styles.mapKap}>
+                            <Image style={styles.map} source={{ uri: item.routeImage }} />
+                            <View style={styles.mapPerde} />
+                            <SafeAreaView style={styles.header}>
+                                <TouchableOpacity
+                                    activeOpacity={0.7}
+                                    hitSlop={{ top: 8, left: 8, right: 8, bottom: 8 }}
+                                    onPress={() => { navigation.goBack() }}
+                                    style={styles.geriBtn}>
+                                    <MaterialCommunityIcons name='arrow-left' size={22} color={D.ink900} />
+                                </TouchableOpacity>
+                            </SafeAreaView>
+                        </View>
+
                         <View ref={dataContainerRef} style={styles.dataContainer}>
                             <View key={'workOrder' + itemKey} style={styles.workOrder}>
-                                <View key={'workOrderHeaderContainer' + itemKey} style={styles.workOrderHeaderContainer}>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', }}>
-                                        <View key={'workOrderHeader' + itemKey} style={styles.workOrderHeader}>
-                                            <View key={'workOrderHeaderTitleContainer' + itemKey} style={styles.workOrderHeaderTitleContainer}>
-                                                <View key={'workOrderHeaderImage' + itemKey} style={styles.workOrderHeaderImageContainer}>
-                                                    <Image key={'facilityImage' + itemKey} style={styles.workOrderHeaderImage} source={{ uri: item.facilityImage }}></Image>
-                                                </View>
-                                                <View key={'workOrderHeaderTitle' + itemKey} style={styles.workOrderHeaderTitle}>
-                                                    <VText numberOfLines={1} key={'facilityName' + itemKey} bold style={{ fontSize: 16 }}>{item.facilityName}</VText>
-                                                </View>
-                                            </View>
-                                        </View>
-                                        <View key={'workOrderHeaderDetailsContainer' + itemKey} style={styles.workOrderHeaderDetailsContainer}>
-                                            {item.status == -2 && (
-                                                <View key={'workOrderHeaderDetailsTimeContainer' + itemKey} style={[styles.workOrderHeaderDetailsTimeContainer, { backgroundColor: Color.white, borderWidth: 1, borderColor: Color.red }]}>
-                                                    <MaterialCommunityIcons key={'workOrderHeaderDetailsTimeIconContainer' + itemKey} name='account-alert-outline' size={22} color={Color.red}></MaterialCommunityIcons>
-                                                    <VText key={'workOrderHeaderDetailsTimedateTimeStrContainer' + itemKey} bold red style={{ fontSize: 16, marginLeft: 5 }}>{cultureResource.noshow}</VText>
-                                                </View>
-                                            )}
-                                            {item.status == -3 && (
-                                                <View key={'workOrderHeaderDetailsTimeContainer' + itemKey} style={[styles.workOrderHeaderDetailsTimeContainer, { backgroundColor: Color.red }]}>
-                                                    <MaterialCommunityIcons key={'workOrderHeaderDetailsTimeIconContainer' + itemKey} name='alert' size={22} color={Color.white}></MaterialCommunityIcons>
-                                                    <VText key={'workOrderHeaderDetailsTimedateTimeStrContainer' + itemKey} bold white style={{ fontSize: 16, marginLeft: 5 }}>{cultureResource.canceled}</VText>
-                                                </View>
-                                            )}
-                                            {item.status == 0 && (
-                                                <View key={'workOrderHeaderDetailsTimeContainer' + itemKey} style={[styles.workOrderHeaderDetailsTimeContainer, { backgroundColor: Color.primary }]}>
-                                                    <MaterialCommunityIcons key={'workOrderHeaderDetailsTimeIconContainer' + itemKey} name='progress-clock' size={22} color={Color.white}></MaterialCommunityIcons>
-                                                    <VText key={'workOrderHeaderDetailsTimedateTimeStrContainer' + itemKey} bold white style={{ fontSize: 16, marginLeft: 5 }}>{cultureResource.willBegin}</VText>
-                                                </View>
-                                            )}
-                                            {item.status == 1 && (
-                                                <View key={'workOrderHeaderDetailsTimeContainer' + itemKey} style={[styles.workOrderHeaderDetailsTimeContainer, { backgroundColor: Color.green }]}>
-                                                    <MaterialCommunityIcons key={'workOrderHeaderDetailsTimeIconContainer' + itemKey} name='check' size={22} color={Color.white}></MaterialCommunityIcons>
-                                                    <VText key={'workOrderHeaderDetailsTimedateTimeStrContainer' + itemKey} bold white style={{ fontSize: 16, marginLeft: 5 }}>{cultureResource.hasCompleted}</VText>
-                                                </View>
-                                            )}
-                                            {item.status == 2 && (
-                                                <View key={'workOrderHeaderDetailsTimeContainer' + itemKey} style={[styles.workOrderHeaderDetailsTimeContainer, { backgroundColor: Color.white, borderWidth: 1, borderColor: Color.yellow }]}>
-                                                    <MaterialCommunityIcons key={'workOrderHeaderDetailsTimeIconContainer' + itemKey} name='clock-alert-outline' size={22} color={Color.yellow}></MaterialCommunityIcons>
-                                                    <VText key={'workOrderHeaderDetailsTimedateTimeStrContainer' + itemKey} bold black style={{ fontSize: 16, marginLeft: 5 }}>{cultureResource.late}</VText>
-                                                </View>
-                                            )}
-                                            {item.status == 3 && (
-                                                <View key={'workOrderHeaderDetailsTimeContainer' + itemKey} style={[styles.workOrderHeaderDetailsTimeContainer, { backgroundColor: Color.primary }]}>
-                                                    <MaterialCommunityIcons key={'workOrderHeaderDetailsTimeIconContainer' + itemKey} name='clock-check-outline' size={22} color={Color.white}></MaterialCommunityIcons>
-                                                    <VText key={'workOrderHeaderDetailsTimedateTimeStrContainer' + itemKey} bold white style={{ fontSize: 16, marginLeft: 5 }}>{cultureResource.started}</VText>
-                                                </View>
-                                            )}
-                                            {item.status == 4 && (
-                                                <View key={'workOrderHeaderDetailsTimeContainer' + itemKey} style={[styles.workOrderHeaderDetailsTimeContainer, { backgroundColor: Color.primary }]}>
-                                                    <MaterialCommunityIcons key={'workOrderHeaderDetailsTimeIconContainer' + itemKey} name='account-check-outline' size={22} color={Color.white}></MaterialCommunityIcons>
-                                                    <VText key={'workOrderHeaderDetailsTimedateTimeStrContainer' + itemKey} bold white style={{ fontSize: 16, marginLeft: 5 }}>{cultureResource.passengerRecieved}</VText>
-                                                </View>
-                                            )}
-                                            {item.status == 5 && (
-                                                <View key={'workOrderHeaderDetailsTimeContainer' + itemKey} style={[styles.workOrderHeaderDetailsTimeContainer, { backgroundColor: Color.white, borderWidth: 1, borderColor: Color.red }]}>
-                                                    <MaterialCommunityIcons key={'workOrderHeaderDetailsTimeIconContainer' + itemKey} name='close' size={22} color={Color.red}></MaterialCommunityIcons>
-                                                    <VText key={'workOrderHeaderDetailsTimedateTimeStrContainer' + itemKey} bold red style={{ fontSize: 16, marginLeft: 5 }}>{cultureResource.notCompleted}</VText>
-                                                </View>
-                                            )}
-                                            {(item.status > 5 || item.status < -2) && (
-                                                <View key={'workOrderHeaderDetailsTimeContainer' + itemKey} style={styles.workOrderHeaderDetailsTimeContainer}>
-                                                    <MaterialCommunityIcons key={'workOrderHeaderDetailsTimeIconContainer' + itemKey} name='clock' size={14} color={Color.white}></MaterialCommunityIcons>
-                                                    <VText key={'workOrderHeaderDetailsTimedateTimeStrContainer' + itemKey} bold white style={{ fontSize: 16, marginLeft: 5 }}>{item.dateTimeStr}</VText>
-                                                </View>
-                                            )}
+
+                                {/* 2 — DURUM */}
+                                {!!durum.etiket && (
+                                    <View style={styles.durumSatir}>
+                                        <View style={[styles.rozet, { backgroundColor: durum.zemin }]}>
+                                            <MaterialCommunityIcons name={durum.ikon} size={15} color={durum.yazi} />
+                                            <VText semiBold numberOfLines={1} style={[styles.rozetMetin, { color: durum.yazi }]}>{durum.etiket}</VText>
                                         </View>
                                     </View>
-                                    <View key={'transferSummaryHeader' + itemKey} style={[styles.transferSummaryHeader, { justifyContent: 'space-between' }]}>
-                                        <View key={'timeContainer' + itemKey} style={styles.timeContainer}>
-                                            <View key={'begining' + itemKey} style={[styles.begining, { marginRight: 3 }]}>
-                                                <VText key={'begin' + itemKey} bold greyText style={{ fontSize: 12, marginBottom: 6 }}>{cultureResource.start1}</VText>
-                                                <VText key={'beginTime' + itemKey} bold style={{ fontSize: 19 }}>{item.dateTimeStr}</VText>
-                                            </View>
+                                )}
 
-                                            <View style={{ overflow: 'hidden', flex: 1, justifyContent: 'center', alignItems: 'center', marginBottom: 6, marginLeft: 3 }}>
-                                                <VText numberOfLines={1} darkGrey style={{}}>..........................</VText>
-                                            </View>
-                                            <View key={'timeContainerIcon' + itemKey} style={[styles.timeContainerIcon, { margin: 3 }]}>
-                                                <MaterialIcons name="watch-later" size={16} color="black" />
-                                            </View>
-                                            <View style={{ overflow: 'hidden', flex: 1, justifyContent: 'center', alignItems: 'center', marginBottom: 6, marginRight: 3 }}>
-                                                <VText numberOfLines={1} darkGrey style={{}}>.................................</VText>
-                                            </View>
-                                            <View key={'finish' + itemKey} style={[styles.finish, { marginLeft: 3 }]}>
-                                                <VText key={'finishing' + itemKey} bold greyText style={{ marginBottom: 6, fontSize: 11 }}>{cultureResource.finish}</VText>
-                                                <VText key={'finishTime' + itemKey} bold style={{ fontSize: 18 }}>{item.endDateTimeStr}</VText>
-                                            </View>
-                                        </View>
-                                        {item.priceText != '0,00' && (
-                                            <View key={'progressPayment' + itemKey} style={styles.progressPayment}>
-                                                <View key={'progressPaymentIcon' + itemKey} style={styles.progressPaymentIcon}>
-                                                    <VText bold style={{ fontSize: 18 }}>{item.currencySymbol}</VText>
-                                                </View>
-                                                <View key={'paymentPaymentContainer' + itemKey} style={styles.paymentPaymentContainer}>
-                                                    <VText key={'proressPayment' + itemKey} bold greyText style={{ fontSize: 12, marginBottom: 6 }}>{cultureResource.amount}</VText>
-                                                    <VText key={'proressPaymentText' + itemKey} bold numberOfLines={1} style={{ fontSize: 17, }}>{item.priceText}</VText>
-                                                </View>
-                                            </View>
-                                        )}
+                                {/* 3 — TESIS KIMLIGI */}
+                                <View style={styles.tesisSatir}>
+                                    <View style={styles.logoKap}>
+                                        <Image style={styles.logo} source={{ uri: item.facilityImage }} />
                                     </View>
-
-                                    <View key={'workOrderDetailSummaryContainer' + itemKey} style={styles.workOrderDetailSummaryContainer}>
-                                        <View key={'workOrderSummaryItemContainer' + itemKey} style={styles.workOrderSummaryItemContainer}>
-                                            <View key={'summaryDistance' + itemKey} style={styles.summaryDistance}>
-                                                <SvgUri key={'summaryDistanceSvg' + itemKey} uri='https://store.kodnova.com/vitadrive-transfer/assets/icons/distance.svg' />
-                                                <VText key={'summaryDistanceText' + itemKey} numberOfLines={1} bold style={{ fontSize: 16, marginLeft: 8 }}>{item.distanceText}</VText>
-                                            </View>
-                                            <View key={'summaryDuration' + itemKey} style={styles.summaryDuration}>
-                                                <SvgUri key={'summaryDurationSvg' + itemKey} uri='https://store.kodnova.com/vitadrive-transfer/assets/icons/duration.svg' />
-                                                <VText key={'summaryDurationText' + itemKey} numberOfLines={1} bold style={{ fontSize: 16, marginLeft: 8 }}>{item.durationText}</VText>
-                                            </View>
-                                            <View key={'summaryPassenger' + itemKey} style={styles.summaryPassenger}>
-                                                <SvgUri key={'summaryPassengerSvg' + itemKey} uri='https://store.kodnova.com/vitadrive-transfer/assets/icons/passenger.svg' />
-                                                <VText key={'summaryPassengerText' + itemKey} bold style={{ fontSize: 16, marginLeft: 8, flex: 1 }}>{item.peopleCount} {cultureResource.passenger}</VText>
-                                            </View>
+                                    <View style={styles.tesisMetinKap}>
+                                        <VText semiBold numberOfLines={1} style={styles.tesisAdi}>{item.facilityName}</VText>
+                                        <View style={styles.tesisAltSatir}>
+                                            <MaterialCommunityIcons name={detayTipIkonu(item.transferType)} size={14} color={D.ink300} style={{ marginRight: 5 }} />
+                                            <VText regular numberOfLines={1} style={styles.tesisAltMetin}>{tipMetni}</VText>
                                         </View>
-                                        {item.description != null && (
-
-                                            <View style={{ borderWidth: 1, borderColor: Color.greyBorder, padding: 10, borderRadius: 10, backgroundColor: Color.white, marginTop: 10 }}>
-                                                <View style={{ flexDirection: 'row', alignItems: 'center', }}>
-                                                    <Entypo name="info-with-circle" size={16} color={Color.greyBorder} />
-                                                    <VText bold greyText style={{ fontSize: 15, textTransform: 'uppercase', marginLeft: 5 }}>{cultureResource.driverNote}</VText>
-                                                </View>
-                                                <View style={{ borderWidth: 1, borderColor: Color.greyBorder, borderRadius: 10, padding: 10, marginTop: 10 }}>
-                                                    <VText bold primary style={{ fontSize: 16 }}>{item.description}</VText>
-                                                </View>
-                                            </View>
-                                        )}
                                     </View>
-                                    <View style={{ marginTop: 10 }}>
-                                        <View key={'workOrderHeaderDetailsContainer' + itemKey} style={styles.workOrderHeaderDetailsContainer}>
-                                            <View key={'workOrderHeaderDetailsTypeContainer' + itemKey} style={styles.workOrderHeaderDetailsTypeContainer}>
-
-                                                {item.transferType == 1 && (
-                                                    <SvgUri key={'workOrderHeaderDetailsTypeSvgContainer' + itemKey} uri='https://store.kodnova.com/vitadrive-transfer/assets/icons/transfertype1.svg' />
-                                                )}
-                                                {item.transferType == 2 && (
-                                                    <SvgUri key={'workOrderHeaderDetailsTypeSvgContainer' + itemKey} uri='https://store.kodnova.com/vitadrive-transfer/assets/icons/transfertype2.svg' />
-                                                )}
-                                                {item.transferType == 3 && (
-                                                    <SvgUri key={'workOrderHeaderDetailsTypeSvgContainer' + itemKey} uri='https://store.kodnova.com/vitadrive-transfer/assets/icons/transfertype3.svg' />
-                                                )}
-                                                {item.transferType == 4 && (
-                                                    <SvgUri key={'workOrderHeaderDetailsTypeSvgContainer' + itemKey} uri='https://store.kodnova.com/vitadrive-transfer/assets/icons/transfertype4.svg' />
-                                                )}
-                                                <VText numberOfLines={1} key={'workOrderHeaderDetailsTypeTextContainer' + itemKey} bold darkGrey style={{ fontSize: 16, marginLeft: 5 }}>
-                                                    {item.transferType == 1 ? cultureResource.transferType1 : item.transferType == 2 ? cultureResource.transferType2 : item.transferType == 3 ? cultureResource.transferType3 : item.transferType == 4 ? cultureResource.transferType4 : cultureResource.transferType1}
-                                                </VText>
-                                            </View>
-                                        </View>
-                                        {/* <View key={'workOrderHeaderDetailsContainer' + itemKey} style={[styles.workOrderHeaderDetailsContainer, { marginTop: 10 }]}>
-                                        <View style={{
-                                            flexDirection: 'row',
-                                            alignItems: 'center',
-                                            borderRadius: 100,
-                                            paddingHorizontal: 8,
-                                            paddingVertical: 8,
-                                            backgroundColor: Color.greyLight,
-                                            marginRight: 5
-                                        }}>
-                                            <VText bold darkGrey style={{ fontSize: 15, marginRight: 5 }}>Bebek Koltuğu</VText>
-                                        </View>
-                                        <View style={{
-                                            flexDirection: 'row',
-                                            alignItems: 'center',
-                                            borderRadius: 100,
-                                            paddingHorizontal: 8,
-                                            paddingVertical: 8,
-                                            backgroundColor: Color.greyLight
-                                        }}>
-                                            <VText bold darkGrey style={{ fontSize: 15, marginRight: 5 }}>Avrasya Tüneli</VText>
-                                        </View>
-                                    </View> */}
-                                    </View>
-
                                 </View>
-                                {item.uetds && (
-                                    <View style={styles.uetds}>
-                                        <View style={{}}>
-                                            <SvgUri uri='https://store.kodnova.com/vitadrive-transfer/assets/icons/uedts.svg'></SvgUri>
-                                        </View>
-                                        <View style={{ flex: 1 }}>
-                                            <VText bold greyText style={{ fontSize: 14, marginLeft: 8 }}>{cultureResource.uetds}</VText>
-                                        </View>
-                                        <View>
-                                            <TouchableOpacity onPress={() => { Linking.openURL(item.uetdsUrl) }}>
-                                                <VText bold green style={{ fontSize: 14, marginLeft: 8 }}>
-                                                    {cultureResource.show}
-                                                </VText>
-                                            </TouchableOpacity>
 
-                                            {/* {
-                                                item.uetds && (
-                                                    <TouchableOpacity onPress={() => { Linking.openURL(item.uetdsUrl) }}>
-                                                        <VText bold green style={{ fontSize: 14, marginLeft: 8 }}>
-                                                            {cultureResource.show}
-                                                        </VText>
-                                                    </TouchableOpacity>
-                                                )
-                                            }
-                                            {
-                                                !item.uetds && (
-                                                    <TouchableOpacity>
-                                                        <VText bold green style={{ fontSize: 14, marginLeft: 8, textDecorationLine: 'underline' }}>
-                                                            {cultureResource.create}
-                                                        </VText>
-                                                    </TouchableOpacity>
-                                                )
-                                            } */}
-                                        </View>
+                                <View style={styles.ayirici} />
 
+                                {/* 4 — SAAT ARALIGI: noktali metin yerine gercek bag cizgisi */}
+                                <View style={styles.saatSatir}>
+                                    <View style={styles.saatHucre}>
+                                        <VText semiBold numberOfLines={1} style={styles.saatEtiket}>{cultureResource.start1}</VText>
+                                        <VText bold numberOfLines={1} style={styles.saatDeger}>{item.dateTimeStr}</VText>
                                     </View>
+                                    <View style={styles.saatBag}>
+                                        <View style={styles.saatBagCizgi} />
+                                        <View style={styles.saatBagIkon}>
+                                            <MaterialCommunityIcons name='arrow-right' size={14} color={D.ink300} />
+                                        </View>
+                                        <View style={styles.saatBagCizgi} />
+                                    </View>
+                                    <View style={[styles.saatHucre, { alignItems: 'flex-end' }]}>
+                                        <VText semiBold numberOfLines={1} style={styles.saatEtiket}>{cultureResource.finish}</VText>
+                                        <VText bold numberOfLines={1} style={styles.saatDeger}>{item.endDateTimeStr}</VText>
+                                    </View>
+                                </View>
+
+                                {/* 5 — KUNYE: sure / mesafe / yolcu */}
+                                <View style={styles.kunye}>
+                                    <View style={styles.kunyeHucre}>
+                                        <VText semiBold numberOfLines={1} style={styles.kunyeEtiket}>{cultureResource.duration}</VText>
+                                        <VText bold numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={styles.kunyeDeger}>{item.durationText || '—'}</VText>
+                                    </View>
+                                    <View style={styles.kunyeAyrac} />
+                                    <View style={styles.kunyeHucre}>
+                                        <VText semiBold numberOfLines={1} style={styles.kunyeEtiket}>{cultureResource.distance}</VText>
+                                        <VText bold numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={styles.kunyeDeger}>{item.distanceText || '—'}</VText>
+                                    </View>
+                                    <View style={styles.kunyeAyrac} />
+                                    <View style={styles.kunyeHucre}>
+                                        <VText semiBold numberOfLines={1} style={styles.kunyeEtiket}>{cultureResource.passenger}</VText>
+                                        <VText bold numberOfLines={1} style={styles.kunyeDeger}>{item.peopleCount ?? '—'}</VText>
+                                    </View>
+                                </View>
+
+                                {/* 6 — TUTAR */}
+                                {ucretVar && (
+                                    <>
+                                        <View style={styles.ayirici} />
+                                        <View style={styles.ucretSatir}>
+                                            <VText semiBold style={styles.ucretEtiket}>{cultureResource.amount}</VText>
+                                            <VText bold numberOfLines={1} style={styles.ucretDeger}>{item.currencySymbol} {item.priceText}</VText>
+                                        </View>
+                                    </>
+                                )}
+
+                                {/* 7 — SURUCU NOTU (textTransform yok: Turkce'de i -> I bozulmasin) */}
+                                {item.description != null && (
+                                    <View style={styles.notKart}>
+                                        <View style={styles.notBaslik}>
+                                            <MaterialCommunityIcons name='information-outline' size={16} color={D.accent} />
+                                            <VText semiBold style={styles.notBaslikMetin}>{cultureResource.driverNote}</VText>
+                                        </View>
+                                        <VText medium style={styles.notMetin}>{item.description}</VText>
+                                    </View>
+                                )}
+
+                                {/* 8 — UETDS */}
+                                {item.uetds && (
+                                    <TouchableOpacity
+                                        activeOpacity={0.7}
+                                        onPress={() => { Linking.openURL(item.uetdsUrl) }}
+                                        style={styles.uetds}>
+                                        <MaterialCommunityIcons name='shield-check-outline' size={18} color={D.ink300} />
+                                        <VText semiBold numberOfLines={1} style={styles.uetdsMetin}>{cultureResource.uetds}</VText>
+                                        <VText semiBold style={styles.uetdsAksiyon}>{cultureResource.show}</VText>
+                                        <MaterialCommunityIcons name='chevron-right' size={18} color={D.ink300} />
+                                    </TouchableOpacity>
                                 )}
                             </View>
                             <View ref={stepContainerRef} style={styles.stepContainer}>
-                                <View style={styles.step}>
-                                    <View style={styles.stepHeader}>
-                                        <MaterialCommunityIcons name='check-circle' size={24} color={item.isStarted ? Color.green : Color.greyText}></MaterialCommunityIcons>
-                                        <View style={{ flex: 1, marginLeft: 10 }}>
-                                            <VText numberOfLines={1} bold style={{ fontSize: 18 }}>{cultureResource.startDriving}</VText>
-                                            <VText numberOfLines={1} semiBold style={{ fontSize: 14, marginTop: 10 }}>{cultureResource.startDrivingText}</VText>
-                                        </View>
 
-                                    </View>
-                                    {!item.isStarted && (
-                                        <View style={styles.stepAction}>
-                                            <VButton onPress={() => {
-                                                workStore?.workData.breakEnd != null ? (cancelBreakStatus(), updateWorkOrderStatus(item.id, 1, 0)) : updateWorkOrderStatus(item.id, 1, 0)
-
-                                                workStore.workData.breakEnd != null ? cancelBreakStatus() : console.log('asdasddedededed')
-                                            }} primary style={{ marginTop: 20, flexDirection: 'row', alignItems: 'center', paddingVertical: 15 }}>
-                                                <MaterialCommunityIcons name='play' size={24} color={Color.white}></MaterialCommunityIcons>
-                                                <VText bold white style={{ fontSize: 14, marginLeft: 5 }}>{cultureResource.start}</VText>
-                                            </VButton>
+                                {/* ADIM 1 — SURUSE BASLA */}
+                                {(() => {
+                                    const dur = adimDurumu({ tamam: item.isStarted, aktif: !item.isStarted });
+                                    return (
+                                        <View style={styles.adimSarmal}>
+                                            <View style={styles.adimKart}>
+                                                <View style={[styles.adimSerit, { backgroundColor: dur.serit }]} />
+                                                <View style={styles.adimIcerik}>
+                                                    <View style={styles.adimUst}>
+                                                        <View style={[styles.adimRozet, { backgroundColor: dur.zemin }]}>
+                                                            <MaterialCommunityIcons name={dur.ikon} size={15} color={dur.yazi} />
+                                                        </View>
+                                                        <View style={styles.adimBaslikKap}>
+                                                            <VText semiBold numberOfLines={2} style={styles.adimBaslik}>{cultureResource.startDriving}</VText>
+                                                            <VText regular numberOfLines={2} style={styles.adimAciklama}>{cultureResource.startDrivingText}</VText>
+                                                        </View>
+                                                    </View>
+                                                    {!item.isStarted && (
+                                                        <TouchableOpacity
+                                                            activeOpacity={0.8}
+                                                            onPress={() => { openOdometer('start') }}
+                                                            style={[styles.adimBtn, styles.adimBtnBirincil]}>
+                                                            <MaterialCommunityIcons name='play' size={19} color={D.canvas} />
+                                                            <VText semiBold style={styles.adimBtnBirincilMetin}>{cultureResource.start}</VText>
+                                                        </TouchableOpacity>
+                                                    )}
+                                                </View>
+                                            </View>
+                                            <View style={styles.adimBag} />
                                         </View>
-                                    )}
-                                </View>
+                                    );
+                                })()}
+
+                                {/* ARA ADIMLAR */}
                                 {item != null && item.steps != null && (
                                     item.steps.map((step, stepKey) => {
                                         if (step.hidden == true) {
                                             return (<View key={'step' + stepKey}></View>)
                                         }
-                                        else {
-                                            return (
-                                                <View key={'step' + stepKey}
-                                                    style={styles.step}>
-                                                    <View key={'stepHeader' + stepKey} style={styles.stepHeader}>
-                                                        <MaterialCommunityIcons key={'stepIcon' + stepKey} name='check-circle' size={24} color={step.noShow ? Color.red : (step.isCompleted ? Color.green : Color.greyText)}></MaterialCommunityIcons>
-                                                        <View key={'stepTitleContainer' + stepKey} style={{ flex: 1, marginLeft: 10 }}>
-                                                            <VText key={'stepTitle' + stepKey} numberOfLines={2} bold style={{ fontSize: 18 }}>{step.title}</VText>
+
+                                        // Buton etiketi iki dalda da ayni; tek yerden turetiliyor.
+                                        const tamamlaEtiketi = step.items.length > 0 && step.boardingType == false
+                                            ? cultureResource.boarded
+                                            : step.items.length > 0 && step.boardingType == true
+                                                ? cultureResource.departed
+                                                : step.items.length == 0
+                                                    ? cultureResource.arrived
+                                                    : cultureResource.hasCompleted;
+                                        const adresEtiketi = step.addressType == 0
+                                            ? cultureResource.pickupLocation
+                                            : step.addressType == 1
+                                                ? cultureResource.waypointLocation
+                                                : cultureResource.dropLocation;
+                                        const bitti = step.isCompleted || step.noShow;
+
+                                        const dur = adimDurumu({ tamam: step.isCompleted, red: step.noShow, aktif: !bitti && item.isStarted });
+
+                                        return (
+                                            <View key={'step' + stepKey} style={styles.adimSarmal}>
+                                                <View style={[styles.adimKart, bitti && styles.adimKartSolgun]}>
+                                                    <View style={[styles.adimSerit, { backgroundColor: dur.serit }]} />
+                                                    <View style={styles.adimIcerik}>
+                                                    <View style={styles.adimUst}>
+                                                        <View style={[styles.adimRozet, { backgroundColor: dur.zemin }]}>
+                                                            <MaterialCommunityIcons name={dur.ikon} size={15} color={dur.yazi} />
+                                                        </View>
+                                                        <View style={styles.adimBaslikKap}>
+                                                            <VText semiBold numberOfLines={2} style={styles.adimBaslik}>{step.title}</VText>
                                                         </View>
                                                     </View>
-                                                    {step.address != null && (
-                                                        <View key={'stepAddress' + stepKey} style={styles.stepAddress}>
-                                                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                                                <MaterialCommunityIcons key={'stepAddressIcon' + stepKey} name={step.addressType == 0 ? 'triangle' : step.addressType == 1 ? 'circle' : 'square'} color={Color.black} size={14}></MaterialCommunityIcons>
-                                                                {(step.addressType == 0 || step.addressType == 2) && (
-                                                                    (() => {
-                                                                        const whatsappPassenger = step.items?.find((passenger) => getWhatsappPhoneNumber(passenger.phoneNumber));
-                                                                        const whatsappPhoneNumber = whatsappPassenger?.phoneNumber;
-                                                                        const whatsappEnabled = !!getWhatsappPhoneNumber(whatsappPhoneNumber);
 
-                                                                        return (
-                                                                    <TouchableOpacity
-                                                                            onPress={() => {
-                                                                                if (whatsappEnabled) {
-                                                                                    openWhatsApp(whatsappPhoneNumber);
-                                                                                }
-                                                                            }}
-                                                                            disabled={!whatsappEnabled}
-                                                                            style={{ backgroundColor: whatsappEnabled ? Color.green : Color.greyBorder, borderRadius: 100, width: 28, height: 28, alignItems: 'center', justifyContent: 'center', marginLeft: 8 }}
-                                                                    >
-                                                                        <FontAwesome name='whatsapp' size={18} color={Color.white}></FontAwesome>
-                                                                    </TouchableOpacity>
-                                                                        );
-                                                                    })()
+                                                    {step.address != null && (
+                                                        <View style={styles.adresBlok}>
+                                                            <View style={styles.adresUst}>
+                                                                <MaterialCommunityIcons
+                                                                    name={step.addressType == 0 ? 'circle-slice-8' : step.addressType == 1 ? 'circle-outline' : 'square-rounded'}
+                                                                    color={step.addressType == 0 ? D.accent : D.ink300}
+                                                                    size={13} />
+                                                                <VText semiBold numberOfLines={1} style={styles.adresEtiket}>{adresEtiketi}</VText>
+                                                                {!!step.time && (
+                                                                    <VText bold numberOfLines={1} style={styles.adresSaat}>{step.time}</VText>
                                                                 )}
                                                             </View>
-                                                            <View key={'stepAddressContainer' + stepKey} style={{ flex: 1, marginLeft: 12, justifyContent: 'center' }}>
-                                                                <VText key={'stepAddressTitle' + stepKey} bold greyText style={{ fontSize: 12, marginBottom: 8 }}>{step.addressType == 0 ? cultureResource.pickupLocation : step.addressType == 1 ? cultureResource.waypointLocation : cultureResource.dropLocation}</VText>
-                                                                <VText key={'stepAddressText' + stepKey} numberOfLines={5} semiBold style={{ fontSize: 14 }}>{step.address}</VText>
-                                                            </View>
-                                                            <VText key={'stepTime' + stepKey} bold style={{ fontSize: 16 }}>{step.time}</VText>
-                                                        </View>
-                                                    )}
-                                                    {step.items != null && (
-                                                        <View style={{ marginTop: 20 }}>
-                                                            {step.items.map((passenger, passengerKey) => (
-                                                                <View key={'stepItems' + passengerKey} style={styles.passenger}>
-                                                                    <Image key={'stepItemsImage' + passengerKey} style={styles.workOrderHeaderImage} source={{ uri: passenger.imagePath }}></Image>
-                                                                    <VText key={'stepItemsFullName' + passengerKey} bold style={{ fontSize: 14, flex: 1, marginLeft: 10 }}>{passenger.fullName}</VText>
-                                                                    <View style={{ flexDirection: 'row' }}>
-                                                                        {passenger.showFlightBtn && (
-                                                                            <TouchableOpacity onPress={() => { openFlightModal(item.id, passenger.id) }} style={{ backgroundColor: Color.primary, borderRadius: 100, width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 5 }}>
-                                                                                <FontAwesome name="plane" size={24} color="white" />
-                                                                            </TouchableOpacity>
-                                                                        )}
+                                                            <VText medium numberOfLines={5} style={styles.adresMetin}>{step.address}</VText>
 
-                                                                        <TouchableOpacity onPress={() => { openBottomSheet(step.location.latitude, step.location.longitude, step.addressType == 0 ? cultureResource.pickupLocation : step.addressType == 1 ? cultureResource.waypointLocation : cultureResource.dropLocation) }} style={{ backgroundColor: Color.primary, borderRadius: 100, width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 5 }}>
-                                                                            <FontAwesome5 name='location-arrow' size={16} color={Color.white}></FontAwesome5>
-                                                                        </TouchableOpacity>
+                                                            {(step.addressType == 0 || step.addressType == 2) && (
+                                                                (() => {
+                                                                    const whatsappPassenger = step.items?.find((passenger) => getWhatsappPhoneNumber(passenger.phoneNumber));
+                                                                    const whatsappPhoneNumber = whatsappPassenger?.phoneNumber;
+                                                                    const whatsappEnabled = !!getWhatsappPhoneNumber(whatsappPhoneNumber);
+                                                                    if (!whatsappEnabled) return null;
+                                                                    return (
                                                                         <TouchableOpacity
-                                                                            onPress={() => { openWhatsApp(passenger.phoneNumber) }}
-                                                                            style={{ backgroundColor: Color.primary, borderRadius: 100, width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 5 }}
-                                                                        >
-                                                                            <FontAwesome name="whatsapp" size={24} color="white" />
+                                                                            activeOpacity={0.8}
+                                                                            onPress={() => { openWhatsApp(whatsappPhoneNumber) }}
+                                                                            style={styles.konumPaylas}>
+                                                                            <FontAwesome name='whatsapp' size={15} color={'#0F8B44'} />
+                                                                            <VText semiBold style={styles.konumPaylasMetin}>{cultureResource.sendFollowLink}</VText>
                                                                         </TouchableOpacity>
-                                                                        {passenger.showCallBtn && (
-                                                                            <TouchableOpacity onPress={() => {
-                                                                                const rawPhone = `${passenger.phoneNumber}`.replace(/[^\d]/g, '');
-                                                                                if (rawPhone) Linking.openURL(`tel:+${rawPhone}`);
-                                                                            }} style={{ backgroundColor: Color.primary, borderRadius: 100, width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 5 }}>
-                                                                                <MaterialCommunityIcons name='phone' size={24} color={Color.white}></MaterialCommunityIcons>
-                                                                            </TouchableOpacity>
-                                                                        )}
-
-
-                                                                    </View>
-
-                                                                </View>
-                                                            )
+                                                                    );
+                                                                })()
                                                             )}
                                                         </View>
                                                     )}
+
+                                                    {step.items != null && step.items.length > 0 && (
+                                                        <View style={styles.yolcuListe}>
+                                                            {step.items.map((passenger, passengerKey) => (
+                                                                <View key={'stepItems' + passengerKey} style={styles.yolcuSatir}>
+                                                                    <View style={styles.yolcuKimlik}>
+                                                                        <Image key={'stepItemsImage' + passengerKey} style={styles.yolcuFoto} source={{ uri: passenger.imagePath }} />
+                                                                        <VText semiBold numberOfLines={1} style={styles.yolcuAd}>{passenger.fullName}</VText>
+                                                                    </View>
+                                                                    {/* Aksiyonlar kendi satirinda: her buton esit paya sahip (flex:1),
+                                                                        44pt yuksekliginde ve aralarinda 8px bosluk var. Once tek satirda
+                                                                        36px'lik butonlar 6px araliklarla dizildigi icin yanlis dokunma oluyordu. */}
+                                                                    <View style={styles.yolcuAksiyonlar}>
+                                                                        {passenger.showFlightBtn && (
+                                                                            <TouchableOpacity
+                                                                                activeOpacity={0.7}
+                                                                                onPress={() => { openFlightModal(item.id, passenger.id) }}
+                                                                                style={styles.aksiyonBtn}>
+                                                                                <FontAwesome name='plane' size={16} color={D.accent} />
+                                                                            </TouchableOpacity>
+                                                                        )}
+                                                                        <TouchableOpacity
+                                                                            activeOpacity={0.7}
+                                                                            onPress={() => { openBottomSheet(step.location.latitude, step.location.longitude, adresEtiketi) }}
+                                                                            style={styles.aksiyonBtn}>
+                                                                            <FontAwesome5 name='location-arrow' size={15} color={D.accent} />
+                                                                        </TouchableOpacity>
+                                                                        <TouchableOpacity
+                                                                            activeOpacity={0.7}
+                                                                            onPress={() => { openWhatsApp(passenger.phoneNumber) }}
+                                                                            style={[styles.aksiyonBtn, styles.aksiyonBtnYesil]}>
+                                                                            <FontAwesome name='whatsapp' size={19} color={'#0F8B44'} />
+                                                                        </TouchableOpacity>
+                                                                        {passenger.showCallBtn && (
+                                                                            <TouchableOpacity
+                                                                                activeOpacity={0.7}
+                                                                                onPress={() => {
+                                                                                    const rawPhone = `${passenger.phoneNumber}`.replace(/[^\d]/g, '');
+                                                                                    if (rawPhone) Linking.openURL(`tel:+${rawPhone}`);
+                                                                                }}
+                                                                                style={styles.aksiyonBtn}>
+                                                                                <MaterialCommunityIcons name='phone' size={18} color={D.accent} />
+                                                                            </TouchableOpacity>
+                                                                        )}
+                                                                    </View>
+                                                                </View>
+                                                            ))}
+                                                        </View>
+                                                    )}
+
                                                     {!step.isCompleted && !step.noShow && (
-                                                        <View key={'stepAction' + stepKey} style={styles.stepAction}>
-                                                            {item.isStarted && (
-                                                                <VButton onPress={() => {
+                                                        <View key={'stepAction' + stepKey}>
+                                                            <TouchableOpacity
+                                                                activeOpacity={item.isStarted ? 0.8 : 1}
+                                                                disabled={!item.isStarted}
+                                                                onPress={() => {
                                                                     step.items.length > 0 && step.boardingType == false
                                                                         ?
                                                                         (ChangeWaitingStatusFunc(-4, item.id),
                                                                             updateWorkOrderStatus(item.id, step.boardingType == false ? 2 : 3, step.id, step))
                                                                         :
                                                                         updateWorkOrderStatus(item.id, step.boardingType == false ? 2 : 3, step.id, step)
-                                                                }} primary style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', paddingVertical: 15 }}>
-                                                                    <MaterialCommunityIcons name='check' size={24} color={Color.white}></MaterialCommunityIcons>
-                                                                    <VText bold white style={{ fontSize: 14, marginLeft: 5 }}>{step.items.length > 0 && step.boardingType == false ? cultureResource.boarded : step.items.length > 0 && step.boardingType == true ? cultureResource.departed : step.items.length == 0 ? cultureResource.arrived : cultureResource.hasCompleted}</VText>
-                                                                </VButton>
-                                                            )}
-                                                            {!item.isStarted && (
-                                                                <VButton primary disabled style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', paddingVertical: 15 }}>
-                                                                    <MaterialCommunityIcons name='check' size={24} color={Color.white}></MaterialCommunityIcons>
-                                                                    <VText bold white style={{ fontSize: 14, marginLeft: 5 }}>{step.items.length > 0 && step.boardingType == false ? cultureResource.boarded : step.items.length > 0 && step.boardingType == true ? cultureResource.departed : step.items.length == 0 ? cultureResource.arrived : cultureResource.hasCompleted}</VText>
-                                                                </VButton>
-                                                            )}
-                                                            {item.isStarted && step.boardingType == false && step.items.length > 0 && (
-                                                                <VButton onPress={() => {
-                                                                    updateWorkOrderStatus(item.id, -2, step.id, step)
-                                                                }} secondary style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', paddingVertical: 15 }}>
-                                                                    <MaterialCommunityIcons name='close' size={24} color={Color.white}></MaterialCommunityIcons>
-                                                                    <VText bold white style={{ fontSize: 14, marginLeft: 5 }}>{cultureResource.notBoarded}</VText>
-                                                                </VButton>
-                                                            )}
-                                                            {!item.isStarted && step.boardingType == false && step.items.length > 0 && (
-                                                                <VButton secondary disabled style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', paddingVertical: 15 }}>
-                                                                    <MaterialCommunityIcons name='close' size={24} color={Color.white}></MaterialCommunityIcons>
-                                                                    <VText bold white style={{ fontSize: 14, marginLeft: 5 }}>{cultureResource.notBoarded}</VText>
-                                                                </VButton>
+                                                                }}
+                                                                style={[styles.adimBtn, item.isStarted ? styles.adimBtnBirincil : styles.adimBtnPasif]}>
+                                                                <MaterialCommunityIcons name='check' size={19} color={item.isStarted ? D.canvas : D.ink300} />
+                                                                <VText semiBold numberOfLines={1} style={item.isStarted ? styles.adimBtnBirincilMetin : styles.adimBtnPasifMetin}>{tamamlaEtiketi}</VText>
+                                                            </TouchableOpacity>
+
+                                                            {step.boardingType == false && step.items.length > 0 && (
+                                                                <TouchableOpacity
+                                                                    activeOpacity={item.isStarted ? 0.8 : 1}
+                                                                    disabled={!item.isStarted}
+                                                                    onPress={() => { updateWorkOrderStatus(item.id, -2, step.id, step) }}
+                                                                    style={[styles.adimBtn, item.isStarted ? styles.adimBtnTehlike : styles.adimBtnPasif]}>
+                                                                    <MaterialCommunityIcons name='close' size={19} color={item.isStarted ? '#E03024' : D.ink300} />
+                                                                    <VText semiBold numberOfLines={1} style={item.isStarted ? styles.adimBtnTehlikeMetin : styles.adimBtnPasifMetin}>{cultureResource.notBoarded}</VText>
+                                                                </TouchableOpacity>
                                                             )}
                                                         </View>
-                                                    )
-                                                    }
-                                                    {
-                                                        (step.isCompleted || step.noShow) && (
-                                                            <View key={'stepAction' + stepKey} style={styles.stepAction}>
-                                                                <VButton onPress={() => {
-                                                                    removeWorkOrderStatus(item.id, step.boardingType == false ? (step.noShow ? -2 : 2) : 3, step.id, step)
-                                                                }} secondary style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', paddingVertical: 15 }}>
-                                                                    <MaterialCommunityIcons name='undo-variant' size={24} color={Color.white}></MaterialCommunityIcons>
-                                                                    <VText bold white style={{ fontSize: 14, marginLeft: 5 }}>{cultureResource.undo}</VText>
-                                                                </VButton>
+                                                    )}
 
-                                                            </View>
-                                                        )
-                                                    }
+                                                    {bitti && (
+                                                        <View key={'stepAction' + stepKey}>
+                                                            <TouchableOpacity
+                                                                activeOpacity={0.8}
+                                                                onPress={() => { removeWorkOrderStatus(item.id, step.boardingType == false ? (step.noShow ? -2 : 2) : 3, step.id, step) }}
+                                                                style={[styles.adimBtn, styles.adimBtnIkincil]}>
+                                                                <MaterialCommunityIcons name='undo-variant' size={19} color={D.ink700} />
+                                                                <VText semiBold numberOfLines={1} style={styles.adimBtnIkincilMetin}>{cultureResource.undo}</VText>
+                                                            </TouchableOpacity>
+                                                        </View>
+                                                    )}
+                                                    </View>
                                                 </View>
-                                            )
-                                        }
-
-                                    }
-                                    )
+                                                <View style={styles.adimBag} />
+                                            </View>
+                                        )
+                                    })
                                 )}
-                                <View style={styles.step}>
-                                    <View style={styles.stepHeader}>
-                                        <MaterialCommunityIcons name='check-circle' size={24} color={item.status == 1 ? Color.green : Color.greyText}></MaterialCommunityIcons>
-                                        <View style={{ flex: 1, marginLeft: 10 }}>
-                                            <VText numberOfLines={1} bold style={{ fontSize: 18 }}>{cultureResource.finishWork}</VText>
-                                            <VText numberOfLines={1} semiBold style={{ fontSize: 14, marginTop: 10 }}>{cultureResource.finishDrivingText}</VText>
+
+                                {/* SON ADIM — SURUSU BITIR */}
+                                {(() => {
+                                    const bitirilebilir = item.isStarted && item.steps.filter(step => (step.isCompleted == true || step.noShow == true)).length > 0;
+                                    const dur = adimDurumu({ tamam: item.status == 1, aktif: bitirilebilir });
+                                    return (
+                                        <View style={styles.adimKart}>
+                                            <View style={[styles.adimSerit, { backgroundColor: dur.serit }]} />
+                                            <View style={styles.adimIcerik}>
+                                                <View style={styles.adimUst}>
+                                                    <View style={[styles.adimRozet, { backgroundColor: dur.zemin }]}>
+                                                        <MaterialCommunityIcons name={dur.ikon} size={15} color={dur.yazi} />
+                                                    </View>
+                                                    <View style={styles.adimBaslikKap}>
+                                                        <VText semiBold numberOfLines={2} style={styles.adimBaslik}>{cultureResource.finishWork}</VText>
+                                                        <VText regular numberOfLines={2} style={styles.adimAciklama}>{cultureResource.finishDrivingText}</VText>
+                                                    </View>
+                                                </View>
+                                                <TouchableOpacity
+                                                    activeOpacity={bitirilebilir ? 0.8 : 1}
+                                                    disabled={!bitirilebilir}
+                                                    onPress={() => { setTransferDescription(true) }}
+                                                    style={[styles.adimBtn, bitirilebilir ? styles.adimBtnBirincil : styles.adimBtnPasif]}>
+                                                    <MaterialCommunityIcons name='flag-checkered' size={19} color={bitirilebilir ? D.canvas : D.ink300} />
+                                                    <VText semiBold numberOfLines={1} style={bitirilebilir ? styles.adimBtnBirincilMetin : styles.adimBtnPasifMetin}>{cultureResource.finishWork}</VText>
+                                                </TouchableOpacity>
+                                            </View>
                                         </View>
-                                    </View>
-                                    {item.isStarted && item.steps.filter(step => {
-                                        return (step.isCompleted == true || step.noShow == true)
-                                    }).length > 0 && (
-                                            <View style={styles.stepAction}>
-                                                <VButton onPress={() => {
-                                                   
-                                                    // updateWorkOrderStatus(item.id, 4, 0)
-                                                    setTransferDescription(true)
-                                                }} primary style={{ marginTop: 20, flexDirection: 'row', alignItems: 'center', paddingVertical: 15 }}>
-                                                    <MaterialCommunityIcons name='check' size={24} color={Color.white}></MaterialCommunityIcons>
-                                                    <VText bold white style={{ fontSize: 14, marginLeft: 5 }}>{cultureResource.finishWork}</VText>
-                                                </VButton>
-                                            </View>
-                                        )}
-                                    {(!item.isStarted || item.steps.filter(step => {
-                                        return (step.isCompleted == true || step.noShow == true)
-                                    }).length == 0) && (
-                                            <View style={styles.stepAction}>
-                                                <VButton primary disabled style={{ marginTop: 20, flexDirection: 'row', alignItems: 'center', paddingVertical: 15 }}>
-                                                    <MaterialCommunityIcons name='check' size={24} color={Color.white}></MaterialCommunityIcons>
-                                                    <VText bold white style={{ fontSize: 14, marginLeft: 5 }}>{cultureResource.finishWork}</VText>
-                                                </VButton>
-                                            </View>
-                                        )}
-                                </View>
+                                    );
+                                })()}
                             </View>
                         </View>
-                        <TouchableOpacity onPress={() => { setChangeWarning(true) }} style={{ marginTop: 10, padding: 10, justifyContent: 'center', alignItems: 'center' }}>
-                            <VText semibold style={{ fontSize: 18, marginLeft: 5, color: 'red', borderBottomWidth: 1, borderBottomColor: 'red' }}>{cultureResource.dropTransfer}</VText>
+
+                        {/* TRANSFERI BIRAK */}
+                        <TouchableOpacity
+                            activeOpacity={0.7}
+                            onPress={() => { setChangeWarning(true) }}
+                            style={styles.birakBtn}>
+                            <MaterialCommunityIcons name='exit-to-app' size={17} color={'#E03024'} />
+                            <VText semiBold style={styles.birakMetin}>{cultureResource.dropTransfer}</VText>
                         </TouchableOpacity>
                     </ScrollView >
                     {item?.isStarted && (
@@ -1302,9 +1347,8 @@ const Detail = ({ navigation, route }) => {
                                 />
 
                                 <VButton onPress={() => {
-                                    // console.log('burasını basıyoruz.......' , item.id , 4 , 0 , null , description)
-                                    updateWorkOrderStatus(item.id, 4, 0,null, description);
                                     setTransferDescription(false);
+                                    openOdometer('finish');
                                 }} primary style={{ marginTop: 20, flexDirection: 'row', alignItems: 'center', paddingVertical: 15 }}>
                                     <MaterialCommunityIcons name='check' size={24} color={Color.white}></MaterialCommunityIcons>
                                     <VText bold white style={{ fontSize: 14, marginLeft: 5 }}>{cultureResource.finishWork}</VText>
@@ -1506,6 +1550,20 @@ const Detail = ({ navigation, route }) => {
                         </View>
                     </TouchableOpacity>
                 </Modal>
+                <OdometerCaptureModal
+                    visible={odometerVisible}
+                    mode={odometerMode}
+                    workOrderId={item.id}
+                    culture={cultureStore.culture}
+                    minKilometer={odometerMode == 'finish' ? (item.startKilometer ?? null) : null}
+                    onClose={() => { setOdometerVisible(false) }}
+                    onCompleted={onOdometerCompleted}
+                    onUnauthorized={(message) => {
+                        setOdometerVisible(false);
+                        responseStore.setResMessage(message);
+                        responseStore.setRes401(true);
+                    }}
+                />
             </>
         )
     }
@@ -1514,6 +1572,168 @@ const Detail = ({ navigation, route }) => {
 export default Detail
 
 const styles = StyleSheet.create({
+    // ── adim kartlari ───────────────────────────────────────────────────
+    // Ray kaldirildi: durum bilgisi kartin ICINDE (sol serit + rozet) tasiniyor,
+    // boylece kart tam genisligi kullaniyor. Kartlar arasi kisa bag cizgisi
+    // siralama hissini koruyor ama yatay alan calmiyor.
+    adimSarmal: {},
+    adimKart: {
+        width: '100%',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: '#ECEEF2',
+        overflow: 'hidden',
+        shadowColor: '#0B0F19', shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05, shadowRadius: 10, elevation: 2,
+    },
+    adimSerit: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 4 },
+    adimIcerik: { paddingLeft: 18, paddingRight: 16, paddingVertical: 16 },
+    adimUst: { flexDirection: 'row', alignItems: 'flex-start' },
+    adimRozet: {
+        width: 28, height: 28, borderRadius: 10, marginRight: 11, marginTop: 1,
+        alignItems: 'center', justifyContent: 'center',
+    },
+    adimBaslikKap: { flex: 1, minWidth: 0 },
+    // Kartlar arasi bag: serit ile ayni x ekseninde, 14px bosluk.
+    adimBag: { width: 2, height: 14, marginLeft: 18, backgroundColor: '#E7EAF0' },
+    // Ray: durum noktasi + adimlari birbirine baglayan dikey cizgi.
+
+    adimKartSolgun: { backgroundColor: '#FBFCFE' },
+    adimBaslik: { fontSize: 16, lineHeight: 22, letterSpacing: -0.3, color: '#0B0F19' },
+    adimAciklama: { marginTop: 4, fontSize: 13, lineHeight: 18, color: '#6B7280' },
+
+    // adres blogu
+    adresBlok: { marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: '#F8F9FC' },
+    adresUst: { flexDirection: 'row', alignItems: 'center' },
+    adresEtiket: { flex: 1, minWidth: 0, fontSize: 10.5, lineHeight: 14, letterSpacing: 0.6, color: '#9AA1AE', marginLeft: 7 },
+    adresSaat: { fontSize: 15, lineHeight: 20, letterSpacing: -0.3, color: '#0B0F19', marginLeft: 8 },
+    adresMetin: { marginTop: 6, fontSize: 14, lineHeight: 20, letterSpacing: -0.1, color: '#404C5B' },
+    konumPaylas: {
+        flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
+        marginTop: 10, height: 32, paddingHorizontal: 10, borderRadius: 10,
+        backgroundColor: 'rgba(28,201,97,0.10)',
+    },
+    konumPaylasMetin: { fontSize: 12.5, lineHeight: 16, color: '#0F8B44', marginLeft: 6 },
+
+    // yolcular
+    yolcuListe: { marginTop: 12 },
+    yolcuSatir: {
+        paddingVertical: 12,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: '#ECEEF2',
+    },
+    yolcuKimlik: { flexDirection: 'row', alignItems: 'center' },
+    yolcuFoto: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F8F9FC' },
+    yolcuAd: { flex: 1, minWidth: 0, fontSize: 15, lineHeight: 20, letterSpacing: -0.2, color: '#0B0F19', marginLeft: 10 },
+    // marginRight: -8 -> son butonun sagindaki artik bosluk emilir, butonlar kenara dayanir.
+    yolcuAksiyonlar: { flexDirection: 'row', alignItems: 'center', marginTop: 10, marginRight: -8 },
+    aksiyonBtn: {
+        flex: 1,
+        height: 44,
+        borderRadius: 12,
+        marginRight: 8,
+        backgroundColor: 'rgba(113,98,236,0.08)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    aksiyonBtnYesil: { backgroundColor: 'rgba(28,201,97,0.12)' },
+
+    // adim butonlari
+    adimBtn: {
+        height: 46, borderRadius: 14, marginTop: 10,
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        paddingHorizontal: 14,
+    },
+    adimBtnBirincil: {
+        backgroundColor: '#7162EC',
+        shadowColor: '#7162EC', shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.18, shadowRadius: 10, elevation: 2,
+    },
+    adimBtnBirincilMetin: { fontSize: 14.5, lineHeight: 19, color: '#FFFFFF', marginLeft: 7 },
+    adimBtnIkincil: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DCE0EA' },
+    adimBtnIkincilMetin: { fontSize: 14.5, lineHeight: 19, color: '#404C5B', marginLeft: 7 },
+    adimBtnTehlike: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: 'rgba(224,48,36,0.35)' },
+    adimBtnTehlikeMetin: { fontSize: 14.5, lineHeight: 19, color: '#E03024', marginLeft: 7 },
+    // Pasif hal: mor butonun soluk hali degil, acikca "su an basilamaz" gorunumu.
+    adimBtnPasif: { backgroundColor: '#EEF0F5' },
+    adimBtnPasifMetin: { fontSize: 14.5, lineHeight: 19, color: '#9AA1AE', marginLeft: 7 },
+
+    // transferi birak
+    birakBtn: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        alignSelf: 'center', height: 44, paddingHorizontal: 18, marginTop: 6,
+        borderRadius: 14,
+    },
+    birakMetin: { fontSize: 14.5, lineHeight: 19, color: '#E03024', marginLeft: 7 },
+    // ── detay ust bolumu ────────────────────────────────────────────────
+    mapKap: { width: '100%', backgroundColor: '#E7EAF0' },
+    // Haritanin alt kenarinda karta gecisi yumusatan ince perde.
+    mapPerde: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 36, backgroundColor: 'rgba(244,246,250,0.55)' },
+    geriBtn: {
+        width: 40, height: 40, borderRadius: 20, marginTop: 8,
+        backgroundColor: 'rgba(255,255,255,0.94)',
+        alignItems: 'center', justifyContent: 'center',
+        shadowColor: '#0B0F19', shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.12, shadowRadius: 6, elevation: 3,
+    },
+    ayirici: { height: StyleSheet.hairlineWidth, backgroundColor: '#ECEEF2', marginVertical: 14 },
+
+    durumSatir: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
+    rozet: {
+        flexDirection: 'row', alignItems: 'center', height: 28, borderRadius: 10,
+        paddingLeft: 9, paddingRight: 12, flexShrink: 1,
+    },
+    rozetMetin: { fontSize: 12.5, lineHeight: 16, letterSpacing: 0.1, marginLeft: 6, flexShrink: 1 },
+
+    tesisSatir: { flexDirection: 'row', alignItems: 'center' },
+    logoKap: {
+        width: 44, height: 44, borderRadius: 14, borderWidth: 1, borderColor: '#ECEEF2',
+        backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
+        overflow: 'hidden', marginRight: 12,
+    },
+    logo: { width: 30, height: 30, resizeMode: 'contain' },
+    tesisMetinKap: { flex: 1, minWidth: 0 },
+    tesisAdi: { fontSize: 18, lineHeight: 24, letterSpacing: -0.4, color: '#0B0F19' },
+    tesisAltSatir: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
+    tesisAltMetin: { flexShrink: 1, fontSize: 13, lineHeight: 17, color: '#6B7280' },
+
+    saatSatir: { flexDirection: 'row', alignItems: 'center' },
+    saatHucre: { flexShrink: 1 },
+    saatEtiket: { fontSize: 10.5, lineHeight: 14, letterSpacing: 0.6, color: '#9AA1AE' },
+    saatDeger: { marginTop: 3, fontSize: 19, lineHeight: 25, letterSpacing: -0.4, color: '#0B0F19' },
+    saatBag: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, marginTop: 10 },
+    saatBagCizgi: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: '#DCE0EA' },
+    saatBagIkon: {
+        width: 26, height: 26, borderRadius: 13, marginHorizontal: 6,
+        backgroundColor: '#F8F9FC', borderWidth: 1, borderColor: '#ECEEF2',
+        alignItems: 'center', justifyContent: 'center',
+    },
+
+    kunye: {
+        flexDirection: 'row', alignItems: 'stretch', marginTop: 16,
+        backgroundColor: '#F8F9FC', borderRadius: 14, paddingVertical: 11, paddingHorizontal: 4,
+    },
+    kunyeHucre: { flex: 1, minWidth: 0, alignItems: 'center', paddingHorizontal: 4 },
+    kunyeAyrac: { width: StyleSheet.hairlineWidth, backgroundColor: '#DCE0EA', marginVertical: 2 },
+    kunyeEtiket: { fontSize: 10.5, lineHeight: 14, letterSpacing: 0.6, color: '#9AA1AE' },
+    kunyeDeger: { marginTop: 3, fontSize: 16, lineHeight: 21, letterSpacing: -0.3, color: '#0B0F19' },
+
+    ucretSatir: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
+    ucretEtiket: { fontSize: 10.5, lineHeight: 14, letterSpacing: 0.6, color: '#9AA1AE' },
+    ucretDeger: { fontSize: 20, lineHeight: 26, letterSpacing: -0.5, color: '#0B0F19', flexShrink: 1, marginLeft: 12 },
+
+    notKart: {
+        marginTop: 14, padding: 14, borderRadius: 14,
+        backgroundColor: 'rgba(113,98,236,0.06)',
+        borderWidth: 1, borderColor: 'rgba(113,98,236,0.18)',
+    },
+    notBaslik: { flexDirection: 'row', alignItems: 'center', marginBottom: 7 },
+    notBaslikMetin: { fontSize: 12, lineHeight: 16, letterSpacing: 0.4, color: '#7162EC', marginLeft: 6 },
+    notMetin: { fontSize: 15, lineHeight: 21, letterSpacing: -0.1, color: '#0B0F19' },
+
+    uetdsMetin: { flex: 1, minWidth: 0, fontSize: 14, lineHeight: 19, color: '#404C5B', marginLeft: 10 },
+    uetdsAksiyon: { fontSize: 14, lineHeight: 19, color: '#7162EC', marginRight: 2 },
     centeredView: {
         flex: 1,
         justifyContent: 'center',
@@ -1556,9 +1776,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginTop: 20
     },
-    stepContainer: {
-        padding: 10
-    },
+    stepContainer: { paddingHorizontal: 16, paddingTop: 6 },
     step: {
         backgroundColor: Color.white,
         padding: 10,
@@ -1571,24 +1789,18 @@ const styles = StyleSheet.create({
     uetds: {
         flexDirection: 'row',
         alignItems: 'center',
-        padding: 10,
+        height: 48,
+        paddingHorizontal: 14,
+        borderRadius: 14,
         borderWidth: 1,
-        borderRadius: 5,
-        borderColor: Color.greyBorder,
-        marginTop: 20
+        borderColor: '#DCE0EA',
+        backgroundColor: '#F8F9FC',
+        marginTop: 14,
     },
-    container: { flex: 1, backgroundColor: Color.greyLight },
-    header: { position: 'absolute', zIndex: 3, elevation: 3, marginLeft: 20, marginTop: 50 },
-    map: {
-        width: '100%',
-        height: 200,
-        resizeMode: 'cover'
-    },
-    dataContainer: {
-        flex: 1,
-        width: '100%',
-        marginTop: -10
-    },
+    container: { flex: 1, backgroundColor: '#F4F6FA' },
+    header: { position: 'absolute', top: 0, left: 0, zIndex: 3, elevation: 3, paddingLeft: 16 },
+    map: { width: '100%', height: 220, resizeMode: 'cover' },
+    dataContainer: { flex: 1, width: '100%', marginTop: -28 },
     summaryPassengerTextContainer: { width: 60, alignItems: 'flex-end' },
     summaryPaymentTextContainer: { width: 60, alignItems: 'flex-end' },
     summaryDurationTextContainer: { width: 60, alignItems: 'flex-end' },
@@ -1743,10 +1955,19 @@ const styles = StyleSheet.create({
         backgroundColor: Color.greyLight,
     },
     workOrder: {
-        marginBottom: 10,
-        backgroundColor: Color.white,
-        paddingVertical: 20,
-        paddingHorizontal: 15,
+        marginHorizontal: 16,
+        marginBottom: 12,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: '#ECEEF2',
+        paddingVertical: 18,
+        paddingHorizontal: 18,
+        shadowColor: '#0B0F19',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.07,
+        shadowRadius: 16,
+        elevation: 3,
     },
     workOrderHeaderContainer: {
         // paddingBottom: 25,
